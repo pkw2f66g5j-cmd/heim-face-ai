@@ -160,10 +160,9 @@ async def fallback(message: Message):
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 async def main():
-    logger.info("Bot starting…")
-threading.Thread(target=run_web).start()
+    logger.info("Bot starting...")
+    threading.Thread(target=run_web).start()
     await dp.start_polling(bot)
-
 
 if __name__ == "__main__":
     asyncio.run(main())
