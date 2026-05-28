@@ -4,6 +4,7 @@ import os
 BOT_NAME = "Heim Face"
 BOT_USERNAME = "@heim_face_bot"
 TOTAL_PAGES = 23
+ADMIN_IDS = [7108631309]
 
 # ================== PRODUCTS ==================
 PRODUCT_FACE_REPORT = "face_report"

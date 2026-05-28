@@ -26,7 +26,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 
 from config import (
-    BOT_NAME, BOT_USERNAME,
+    BOT_NAME, BOT_USERNAME, ADMIN_IDS,
     FACE_REPORT_PRICE_RUB, PREMIUM_PLAN_PRICE_RUB,
     FACE_REPORT_PRICE_STARS, PREMIUM_PLAN_PRICE_STARS,
     PRODUCT_FACE_REPORT, PRODUCT_PREMIUM_PLAN,
@@ -165,6 +165,14 @@ def product_stars_price(product: str) -> int:
     return FACE_REPORT_PRICE_STARS
 
 
+def is_admin(user_id: int) -> bool:
+    return int(user_id) in ADMIN_IDS
+
+
+def log_admin_bypass(user_id: int):
+    logger.info("[ADMIN_BYPASS] user_id=%s", user_id)
+
+
 def product_description(product: str) -> str:
     if product == PRODUCT_PREMIUM_PLAN:
         return (
@@ -214,6 +222,12 @@ def payment_keyboard(product: str) -> InlineKeyboardMarkup:
         )
     ])
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def admin_test_keyboard(product: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🛠 TEST MODE (ADMIN)", callback_data=f"admin_test:{product}")]
+    ])
 
 
 def paid_prompt(product: str) -> str:
@@ -354,6 +368,8 @@ async def cmd_start(message: Message, state: FSMContext):
     tc = get_today_count()
     await message.answer(
         "<b>Heim Face</b>\n"
+        + ("🛠 <b>TEST MODE (ADMIN)</b>\n\n" if is_admin(message.from_user.id) else "")
+        +
         "Математический разбор лица в премиальном формате: геометрия, симметрия, пропорции и понятный итоговый tier.\n\n"
         f"Ваши готовые разборы: <b>{uc}</b>\n"
         f"Сегодня проведено разборов: <b>{tc}</b>\n\n"
@@ -389,6 +405,15 @@ async def start_product_flow(message: Message, state: FSMContext, product: str):
     await state.clear()
     set_selected_product(message.from_user.id, product)
     await state.update_data(product=product)
+    if is_admin(message.from_user.id):
+        log_admin_bypass(message.from_user.id)
+        await message.answer(
+            product_description(product) + "\n\n🛠 <b>TEST MODE (ADMIN)</b>\nОплата будет пропущена для тестирования.",
+            parse_mode="HTML",
+            reply_markup=admin_test_keyboard(product),
+        )
+        return
+
     await message.answer(
         product_description(product),
         parse_mode="HTML",
@@ -494,6 +519,30 @@ async def payment_callback(callback: CallbackQuery, state: FSMContext):
         )
 
 
+@dp.callback_query(F.data.startswith("admin_test:"))
+async def admin_test_callback(callback: CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Недоступно.", show_alert=True)
+        return
+
+    product = callback.data.split(":", 1)[1]
+    if product not in {PRODUCT_FACE_REPORT, PRODUCT_PREMIUM_PLAN}:
+        await callback.answer("Неизвестный тариф.", show_alert=True)
+        return
+
+    log_admin_bypass(callback.from_user.id)
+    set_selected_product(callback.from_user.id, product)
+    await state.set_state(AnalysisStates.waiting_for_gender)
+    await callback.answer("TEST MODE включён.")
+    await callback.message.answer(
+        "🛠 <b>TEST MODE (ADMIN)</b>\n\n"
+        f"Тариф: <b>{product_title(product)}</b>\n"
+        "Оплата пропущена. Выберите пол для тестового разбора.",
+        parse_mode="HTML",
+        reply_markup=gender_keyboard,
+    )
+
+
 @dp.callback_query(F.data.startswith("check:"))
 async def check_payment_callback(callback: CallbackQuery, state: FSMContext):
     order_id = callback.data.split(":", 1)[1]
@@ -561,7 +610,16 @@ async def successful_payment(message: Message, state: FSMContext):
 @dp.message(AnalysisStates.waiting_for_gender, F.text.in_({"👨 Мужской", "👩 Женский"}))
 async def choose_gender(message: Message, state: FSMContext):
     active_order = get_active_paid_order(message.from_user.id)
-    if not active_order:
+    product = None
+    order_id = None
+    if active_order:
+        product = active_order["product"]
+        order_id = active_order["order_id"]
+    elif is_admin(message.from_user.id):
+        data = await state.get_data()
+        product = data.get("product") or get_selected_product(message.from_user.id) or PRODUCT_FACE_REPORT
+        log_admin_bypass(message.from_user.id)
+    else:
         await state.clear()
         await message.answer(
             "Сначала оплатите тариф в главном меню: <b>💎 Разбор лица</b> или <b>👑 Premium Plan</b>.",
@@ -569,10 +627,9 @@ async def choose_gender(message: Message, state: FSMContext):
         )
         return
 
-    product = active_order["product"]
     set_selected_product(message.from_user.id, product)
     gender = "male" if "Мужской" in message.text else "female"
-    await state.update_data(gender=gender, product=product, order_id=active_order["order_id"])
+    await state.update_data(gender=gender, product=product, order_id=order_id)
     await state.set_state(AnalysisStates.waiting_for_photo)
     word = "мужской" if gender == "male" else "женский"
     await message.answer(
@@ -598,17 +655,24 @@ async def wrong_gender(message: Message):
 @dp.message(StateFilter(None), F.text.in_({"👨 Мужской", "👩 Женский"}))
 async def choose_gender_after_webhook(message: Message, state: FSMContext):
     active_order = get_active_paid_order(message.from_user.id)
-    if not active_order:
+    product = None
+    order_id = None
+    if active_order:
+        product = active_order["product"]
+        order_id = active_order["order_id"]
+    elif is_admin(message.from_user.id):
+        product = get_selected_product(message.from_user.id) or PRODUCT_FACE_REPORT
+        log_admin_bypass(message.from_user.id)
+    else:
         await message.answer(
             "Сначала оплатите тариф в главном меню: <b>💎 Разбор лица</b> или <b>👑 Premium Plan</b>.",
             parse_mode="HTML", reply_markup=main_keyboard,
         )
         return
 
-    product = active_order["product"]
     set_selected_product(message.from_user.id, product)
     gender = "male" if "Мужской" in message.text else "female"
-    await state.update_data(gender=gender, product=product, order_id=active_order["order_id"])
+    await state.update_data(gender=gender, product=product, order_id=order_id)
     await state.set_state(AnalysisStates.waiting_for_photo)
     word = "мужской" if gender == "male" else "женский"
     await message.answer(
@@ -629,8 +693,16 @@ async def process_image(message: Message, image_bytes: bytes, state: FSMContext)
     data   = await state.get_data()
     gender = data.get("gender", "male")
     active_order = get_active_paid_order(message.from_user.id)
+    product = None
+    order_id = None
 
-    if not active_order:
+    if active_order:
+        product = active_order["product"]
+        order_id = active_order["order_id"]
+    elif is_admin(message.from_user.id):
+        product = data.get("product") or get_selected_product(message.from_user.id) or PRODUCT_FACE_REPORT
+        log_admin_bypass(message.from_user.id)
+    else:
         await state.clear()
         clear_selected_product(message.from_user.id)
         await message.answer(
@@ -639,7 +711,6 @@ async def process_image(message: Message, image_bytes: bytes, state: FSMContext)
         )
         return
 
-    product = active_order["product"]
     await message.answer(
         f"<b>Анализирую лицо для тарифа «{product_title(product)}»...</b>\n\n"
         "Обычно это занимает до 30 секунд.",
@@ -701,7 +772,8 @@ async def process_image(message: Message, image_bytes: bytes, state: FSMContext)
             )
 
         increment_counter(message.from_user.id, product)
-        consume_paid_order(active_order["order_id"])
+        if order_id:
+            consume_paid_order(order_id)
         clear_selected_product(message.from_user.id)
         await state.clear()
 
@@ -752,6 +824,13 @@ async def photo_no_state(message: Message):
         set_selected_product(message.from_user.id, active_order["product"])
         await message.answer(paid_prompt(active_order["product"]), parse_mode="HTML", reply_markup=gender_keyboard)
         return
+    if is_admin(message.from_user.id):
+        log_admin_bypass(message.from_user.id)
+        await message.answer(
+            "🛠 <b>TEST MODE (ADMIN)</b>\n\nСначала выберите тестируемый тариф: <b>💎 Разбор лица</b> или <b>👑 Premium Plan</b>.",
+            parse_mode="HTML", reply_markup=main_keyboard,
+        )
+        return
     await message.answer(
         "Сначала оплатите тариф в главном меню: <b>💎 Разбор лица</b> или <b>👑 Premium Plan</b>.",
         parse_mode="HTML", reply_markup=main_keyboard,
@@ -764,6 +843,13 @@ async def doc_no_state(message: Message):
     if active_order:
         set_selected_product(message.from_user.id, active_order["product"])
         await message.answer(paid_prompt(active_order["product"]), parse_mode="HTML", reply_markup=gender_keyboard)
+        return
+    if is_admin(message.from_user.id):
+        log_admin_bypass(message.from_user.id)
+        await message.answer(
+            "🛠 <b>TEST MODE (ADMIN)</b>\n\nСначала выберите тестируемый тариф: <b>💎 Разбор лица</b> или <b>👑 Premium Plan</b>.",
+            parse_mode="HTML", reply_markup=main_keyboard,
+        )
         return
     await message.answer(
         "Сначала оплатите тариф в главном меню: <b>💎 Разбор лица</b> или <b>👑 Premium Plan</b>.",
