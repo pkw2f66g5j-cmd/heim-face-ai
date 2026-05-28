@@ -727,46 +727,125 @@ def _has_metric(metrics, *names):
     return any(name in present for name in names)
 
 
+EYE_METRICS = {"Размер глаз", "Расстояние между глазами", "Наклон глаз", "Биокулярная ширина", "Форма глаз", "Высота бровей"}
+LIP_METRICS = {"Ширина рта", "Полнота губ", "Пропорции губ"}
+JAW_METRICS = {"Баланс скул и челюсти", "Длина подбородка", "Контур подбородка", "Челюсть к ширине рта"}
+NOSE_METRICS = {"Ширина носа", "Длина носа", "Нос к ширине рта"}
+FRAME_METRICS = {"Пропорции лица", "Вертикальный баланс", "Ширина лба"}
+
+
+def _metrics_in_group(metrics, group):
+    return [m for m in metrics if m["name"] in group]
+
+
+def _best_in_group(data, group):
+    matches = _metrics_in_group(data["strengths"], group)
+    return matches[0] if matches else None
+
+
+def _weak_in_group(data, group):
+    matches = _metrics_in_group(data["weak"], group)
+    return matches[0] if matches else None
+
+
+def _limiting_metric(data):
+    return sorted(data["metrics"], key=lambda m: m["score"])[0]
+
+
+def _potential_range(score, weak_count=3):
+    lift = 0.38 + min(0.32, weak_count * 0.08)
+    low = min(9.4, score + lift)
+    high = min(9.7, low + 0.28)
+    return round(low, 1), round(high, 1)
+
+
+def _metric_group_name(metric_name):
+    if metric_name in EYE_METRICS:
+        return "глазная зона"
+    if metric_name in LIP_METRICS:
+        return "рот и губы"
+    if metric_name in JAW_METRICS:
+        return "нижняя треть"
+    if metric_name in NOSE_METRICS:
+        return "центральная зона"
+    if metric_name in FRAME_METRICS:
+        return "рамка лица"
+    if metric_name == "Симметрия лица":
+        return "симметрия"
+    return "общий баланс"
+
+
+def _primary_strength_sentence(data):
+    m = data["strengths"][0]
+    group = _metric_group_name(m["name"])
+    return f"Главный актив: {m['name'].lower()} ({display_metric_score(m['score']):.2f}/10), зона: {group}."
+
+
+def _primary_limit_sentence(data):
+    m = _limiting_metric(data)
+    group = _metric_group_name(m["name"])
+    return f"Главный ограничивающий фактор: {m['name'].lower()} ({score_status(m['score'])}), зона: {group}."
+
+
+def _zone_strategy(metric_name, gender, strong=False):
+    if metric_name in EYE_METRICS:
+        if strong:
+            return "Делай взгляд главным акцентом: чистая нижняя линия брови, мягкий свет чуть выше камеры, спокойное выражение без широкой улыбки."
+        return "Собери взгляд через grooming бровей: убрать лишнее снизу, уложить волоски вверх-наружу, не закрывать глаза волосами и избегать верхнего жёсткого света."
+    if metric_name in LIP_METRICS:
+        if strong:
+            return "Используй губы и рот как харизматичный акцент: увлажнение, мягкая полуулыбка, расслабленная нижняя треть, без сжатых губ."
+        return "Не сжимай рот на фото, проверь увлажнение губ и контур. Лучше нейтральное выражение с лёгкой мягкостью, чем широкая напряжённая улыбка."
+    if metric_name in JAW_METRICS:
+        if gender == "male":
+            return "Нижнюю треть усиливают щетина 2-5 мм, чистая линия шеи, камера чуть выше глаз и свет сверху-сбоку."
+        return "Нижнюю треть смягчают вытянутая шея, лёгкий контур под скулой, чистая линия волос у лица и спокойный акцент на глазах."
+    if metric_name in NOSE_METRICS:
+        return "Центральную зону балансируют дистанция камеры, мягкий фронтальный свет, ракурс 10-15 градусов, чистые брови и спокойный контраст одежды."
+    if metric_name in FRAME_METRICS:
+        return "Рамку лица корректируют стрижка, объём и открытая верхняя треть: меньше случайной пышности, больше контролируемой формы."
+    if metric_name == "Симметрия лица":
+        if strong:
+            return "Симметрию стоит показывать фронтальным мягким светом, ровной посадкой головы и аккуратной линией волос/бровей."
+        return "Симметрию визуально собирают ровная укладка, одинаковая плотность бровей, фронтальный свет и отсутствие сильного наклона головы."
+    return "Главный принцип: убрать визуальный шум, повторять рабочий свет и держать grooming максимально чистым."
+
+
 def _metric_tip(name, gender, strong=False):
     if name in {"Ширина носа", "Нос к ширине рта", "Длина носа"}:
         return (
             "Центральная зона",
-            "Держи мягкий фронтальный свет, избегай нижнего света и сверхблизкой камеры. Чистая линия волос, аккуратные брови и умеренный контраст одежды помогают сбалансировать центр лица без радикальных решений.",
+            _zone_strategy(name, gender, strong),
         )
     if name in {"Высота бровей", "Наклон глаз", "Форма глаз", "Размер глаз", "Расстояние между глазами", "Биокулярная ширина"}:
         if strong and name == "Форма глаз":
             return (
                 "Взгляд как акцент",
-                "Подчёркивай форму глаз чистой линией бровей, мягким боковым светом и ракурсом 3/4. На фото держи лёгкое напряжение нижнего века: взгляд становится собраннее.",
+                _zone_strategy(name, gender, strong),
             )
         return (
             "Брови и взгляд",
-            "Убери лишние волоски по нижней линии, уложи брови вверх и наружу, проверь хвостик брови на фото. Для кадра используй свет чуть выше уровня глаз и спокойное выражение.",
+            _zone_strategy(name, gender, strong),
         )
     if name in {"Ширина рта", "Полнота губ", "Пропорции губ"}:
         return (
             "Рот и губы",
-            "Перед фото увлажни губы, не сжимай рот и держи мягкое нейтральное выражение. Если эта зона сильная, лёгкая полуулыбка даст больше харизмы, чем широкая улыбка.",
+            _zone_strategy(name, gender, strong),
         )
     if name in {"Длина подбородка", "Контур подбородка", "Челюсть к ширине рта", "Баланс скул и челюсти"}:
-        if gender == "male":
-            return (
-                "Нижняя треть",
-                "Проверь щетину 2-5 мм, чистую линию шеи и свет сверху-сбоку. Это визуально собирает челюсть и делает нижний контур чётче.",
-            )
         return (
             "Нижняя треть",
-            "Используй мягкий контур по нижней линии и не перегружай макияж губ. На фото слегка вытягивай шею и подавай подбородок вперёд-вниз.",
+            _zone_strategy(name, gender, strong),
         )
     if name in {"Пропорции лица", "Вертикальный баланс", "Ширина лба"}:
         return (
             "Рамка лица",
-            "Причёска должна балансировать вертикаль и ширину: меньше случайного объёма, больше контролируемой формы. Открывай сильные зоны и не закрывай брови тяжёлой прядью.",
+            _zone_strategy(name, gender, strong),
         )
     if name == "Симметрия лица":
         return (
             "Симметрия",
-            "Держи пробор, брови и бороду/контур максимально аккуратными. На фото выбирай фронтальный свет и не наклоняй голову сильнее 5-7 градусов.",
+            _zone_strategy(name, gender, strong),
         )
     return (
         "Визуальная настройка",
@@ -790,6 +869,118 @@ def _growth_items(data, gender):
     return items
 
 
+def _hair_plan(data, gender):
+    weak = data["weak"]
+    strengths = data["strengths"]
+    eye_strength = _best_in_group(data, EYE_METRICS)
+    jaw_weak = _weak_in_group(data, JAW_METRICS)
+    frame_weak = _weak_in_group(data, FRAME_METRICS)
+    nose_weak = _weak_in_group(data, NOSE_METRICS)
+
+    if frame_weak and frame_weak["name"] == "Пропорции лица":
+        recommended = "Текстурированный crop, side part с умеренным объёмом, medium taper, мягкие слои у лица."
+        avoid = "Слишком высокий pompadour, тяжёлая ровная чёлка, экстремально короткие бока без баланса сверху."
+        why = f"Потому что {frame_weak['name'].lower()} сейчас ограничивает рамку лица: стрижка должна управлять высотой и шириной, а не усиливать перекос."
+    elif jaw_weak:
+        recommended = "Средняя длина с чистыми висками, taper fade без агрессии, лёгкий объём сверху, аккуратная щетина для связки с нижней третью."
+        avoid = "Гладко прилизанные волосы назад, очень длинные пряди вдоль щёк, резкий undercut без объёма у темени."
+        why = f"Потому что зона «{jaw_weak['name']}» просит визуально собрать нижний контур и не утяжелять боковые линии."
+    elif eye_strength:
+        recommended = "Открытый лоб, лёгкая текстура, side part или curtain flow без перекрытия бровей."
+        avoid = "Длинная чёлка ниже бровей, мокрая укладка на лицо, хаотичный объём у глаз."
+        why = f"Потому что сильная зона «{eye_strength['name']}» должна быть видна: волосы не должны закрывать взгляд."
+    elif nose_weak:
+        recommended = "Мягкий объём сверху, чистые виски, форма без резких центральных линий и без пряди, падающей на нос."
+        avoid = "Центральный пробор с жёсткими вертикалями, плоская укладка, сверхкороткая стрижка без рамки."
+        why = f"Потому что «{nose_weak['name']}» лучше балансировать рамкой лица, светом и боковым объёмом, а не подчёркивать центр."
+    else:
+        recommended = "Классический taper, side part, мягкая текстура сверху, чистый контур висков и затылка."
+        avoid = "Случайная длина без формы, пересушенная укладка, слишком много стайлинга и тяжёлая чёлка."
+        why = f"Потому что твои сильные зоны ({_lux_metric_names(strengths)}) лучше работают в чистой и спокойной рамке."
+
+    return [
+        ("Рекомендуемые стрижки", recommended),
+        ("Нежелательные стрижки", avoid),
+        ("Почему именно так", why),
+        ("Точка контроля", "После стрижки сделай фото анфас и 3/4 при дневном свете. Если взгляд/нижняя треть стали читаться хуже — форма выбрана неудачно."),
+    ]
+
+
+def _brow_plan(data, gender):
+    weak_brow = _weak_in_group(data, {"Высота бровей", "Наклон глаз", "Расстояние между глазами"})
+    strong_eye = _best_in_group(data, EYE_METRICS)
+    if weak_brow:
+        remove = "Убрать лишние волоски под нижней линией и у переносицы, особенно всё, что визуально опускает хвостик."
+        keep = "Не трогать верхнюю линию слишком агрессивно: она держит плотность и статус взгляда."
+        style = "Укладывать вверх и наружу прозрачным гелем; хвостик направлять слегка к виску, без резкой графики."
+        why = f"Потому что зона «{weak_brow['name']}» сейчас влияет на открытость и собранность взгляда."
+    elif strong_eye:
+        remove = "Убрать только визуальный шум: отдельные волоски снизу, у переносицы и выбившиеся по хвостику."
+        keep = "Сохранить натуральную толщину и мягкую асимметрию: сильная зона «глаза» не требует тяжёлой коррекции."
+        style = "Лёгкая укладка вверх, затем наружу. На фото бровь должна открывать глаз, а не становиться главным объектом."
+        why = f"Потому что «{strong_eye['name']}» уже работает как актив, бровь должна его подсветить."
+    else:
+        remove = "Убрать нижний хаос и волоски у переносицы."
+        keep = "Не делать брови тонкими и слишком тёмными."
+        style = "Натуральная укладка по направлению роста плюс лёгкий подъём хвостика."
+        why = "Потому что аккуратная бровь делает верхнюю треть дороже даже без яркого акцента на глазах."
+    return [("Что убрать", remove), ("Что не трогать", keep), ("Как укладывать", style), ("Почему", why)]
+
+
+def _photo_plan(data):
+    weak = data["weak"]
+    strengths = data["strengths"]
+    nose_weak = _weak_in_group(data, NOSE_METRICS)
+    jaw_weak = _weak_in_group(data, JAW_METRICS)
+    eye_strength = _best_in_group(data, EYE_METRICS)
+    lip_strength = _best_in_group(data, LIP_METRICS)
+
+    best_angle = "3/4 на 10-15 градусов, камера чуть выше уровня глаз"
+    worst_angle = "сверхблизко, 0.5x, камера снизу"
+    if jaw_weak:
+        best_angle = "камера чуть выше глаз, подбородок слегка вперёд-вниз, шея длинная"
+        worst_angle = "камера снизу и втянутая шея: это прячет линию челюсти"
+    if nose_weak:
+        best_angle = "3/4 на 10 градусов с дистанцией от камеры; объектив без широкого угла"
+        worst_angle = "фронтальный сверхкрупный план и 0.5x: центр лица станет визуально тяжелее"
+
+    best_light = "мягкий фронтальный свет из окна, источник чуть выше глаз"
+    worst_light = "нижний свет, точечный верхний свет, жёсткая лампа прямо над лицом"
+    if eye_strength:
+        best_light = f"мягкий верхне-фронтальный свет: он подчёркивает сильную зону «{eye_strength['name']}»"
+    if lip_strength:
+        best_angle += "; выражение — расслабленная полуулыбка"
+
+    return [
+        ("Лучший ракурс", best_angle),
+        ("Худший ракурс", worst_angle),
+        ("Лучший свет", best_light),
+        ("Худший свет", worst_light),
+        ("Персональный акцент", f"В кадре сначала должен считываться актив: {_lux_metric_names(strengths)}; не давай слабым зонам ({_lux_metric_names(weak)}) стать центром внимания."),
+    ]
+
+
+def _limiter_plan(data, gender):
+    limiter = _limiting_metric(data)
+    return [
+        ("Метрика", f"{limiter['name']} · технический score {limiter['score']:.2f}/10 · визуально: {score_status(limiter['score'])}."),
+        ("Что это ограничивает", f"Эта зона влияет на {_metric_group_name(limiter['name'])} и может снижать общий уровень впечатления сильнее, чем остальные метрики."),
+        ("Как смягчать", _zone_strategy(limiter["name"], gender, strong=False)),
+        ("Чего не делать", "Не пытайся компенсировать зону агрессивными решениями. В Premium-логике сначала работают свет, ракурс, grooming, причёска и чистая подача."),
+    ]
+
+
+def _potential_plan(data, gender):
+    low, high = _potential_range(data["score"], len(data["weak"]))
+    limiter = _limiting_metric(data)
+    return [
+        ("Текущий score", f"{data['score']:.2f}/10 · tier {data['tier']['abbr']} · {data['tier']['name']}."),
+        ("Прогноз после внедрения", f"{data['score']:.2f} → {low:.1f}-{high:.1f}. Это визуальный прогноз, а не пересчёт исходных метрик."),
+        ("Что даёт прирост", f"Главный рычаг — зона «{limiter['name']}», плюс усиление сильных сторон: {_lux_metric_names(data['strengths'])}."),
+        ("Условие", "Прогноз реалистичен только при повторяемой системе: стрижка, брови, кожа, depuff-утро и одинаковые фото-условия 30 дней."),
+    ]
+
+
 def _lux_section_page(c, w, h, page_num, total_pages, kicker, title, intro, items):
     _lux_header(c, w, h, kicker, title, page_num, total_pages)
     y = h - 170
@@ -801,49 +992,52 @@ def _lux_section_page(c, w, h, page_num, total_pages, kicker, title, intro, item
 def _lux_cover(c, w, h, image_bytes, data, page_num, total_pages):
     _lux_bg(c, w, h)
     tier = data["tier"]
+    limiter = _limiting_metric(data)
 
     c.setFillColor(HexColor(LUX_GOLD))
     c.setFont(FONT_BOLD, 10)
     c.drawString(58, h - 76, "HEIM FACE · PREMIUM PLAN")
     c.setFillColor(HexColor(LUX_TEXT))
-    c.setFont(FONT_BOLD, 34)
+    c.setFont(FONT_BOLD, 36)
     c.drawString(58, h - 118, "Луксмаксинг-план")
     c.setFillColor(HexColor(LUX_TEXT_SOFT))
     c.setFont(FONT_REGULAR, 11)
     c.drawString(58, h - 140, "Персональная стратегия внешнего потенциала")
 
     img = base_image_for_overlay(image_bytes)
-    img.thumbnail((215, 270))
+    img.thumbnail((255, 330))
     iw, ih = img.size
     ix = w - iw - 58
-    iy = h - 420
+    iy = h - 475
     c.setFillColor(HexColor(LUX_PANEL))
     c.roundRect(ix - 10, iy - 10, iw + 20, ih + 20, 10, fill=1, stroke=0)
     c.drawImage(ImageReader(img), ix, iy, width=iw, height=ih, preserveAspectRatio=True, mask="auto")
 
     c.setFillColor(HexColor(LUX_TEXT_MUTED))
     c.setFont(FONT_BOLD, 8)
-    c.drawString(58, h - 230, "ОЦЕНКА ВНЕШНЕГО ПОТЕНЦИАЛА")
+    c.drawString(58, h - 205, "ПРОФИЛЬ")
     c.setFillColor(HexColor(tier["color"]))
-    c.setFont(FONT_BOLD, 58)
-    c.drawString(58, h - 292, f"{data['score']:.2f}")
+    c.setFont(FONT_BOLD, 56)
+    c.drawString(58, h - 267, f"{data['score']:.2f}")
     c.setFillColor(HexColor(LUX_TEXT_SOFT))
     c.setFont(FONT_REGULAR, 13)
-    c.drawString(205, h - 286, "/ 10")
-    _bar(c, 58, h - 316, 245, data["score"], tier["color"], height=9)
+    c.drawString(205, h - 261, "/ 10")
+    _bar(c, 58, h - 292, 235, data["score"], tier["color"], height=9)
 
     c.setFillColor(HexColor(LUX_GOLD_SOFT))
     c.setFont(FONT_BOLD, 15)
-    c.drawString(58, h - 355, f"{tier['abbr']} · {tier['name']}")
+    c.drawString(58, h - 325, f"{tier['abbr']} · {tier['name']}")
     c.setFillColor(HexColor(LUX_TEXT_SOFT))
     c.setFont(FONT_REGULAR, 10)
-    c.drawString(58, h - 375, f"Дата: {data['date']}")
+    c.drawString(58, h - 345, f"Дата: {data['date']}")
 
+    _lux_card(c, 58, 250, 225, 78, "Главный актив", _primary_strength_sentence(data), accent=LUX_GOLD)
+    _lux_card(c, 312, 250, 225, 78, "Главный лимитер", _primary_limit_sentence(data), accent=LUX_PURPLE)
     _lux_card(
-        c, 58, 215, w - 116, 92,
-        "Фокус плана",
-        "Этот PDF не заменяет основной разбор лица. Он переводит метрики в практичные шаги: причёска, кожа, брови, нижняя треть, отёчность, фото и режим.",
-        accent=LUX_GOLD,
+        c, 58, 145, w - 116, 74,
+        "Топ сильных зон",
+        " · ".join(f"{m['name']} {display_metric_score(m['score']):.1f}" for m in data["strengths"]),
+        accent=tier["color"],
     )
     _lux_footer(c, w, page_num, total_pages)
 
@@ -895,163 +1089,292 @@ def _lux_growth_page(c, w, h, data, page_num, total_pages):
     _lux_section_page(c, w, h, page_num, total_pages, "Growth map", "Зоны роста", intro, items)
 
 
+def _lux_limiter_page(c, w, h, data, gender, page_num, total_pages):
+    _lux_header(c, w, h, "Main limiter", "Главный ограничивающий фактор", page_num, total_pages)
+    limiter = _limiting_metric(data)
+    group = _metric_group_name(limiter["name"])
+    visual_score = display_metric_score(limiter["score"])
+    y = h - 175
+
+    c.setFillColor(HexColor(LUX_PURPLE))
+    c.setFont(FONT_BOLD, 10)
+    c.drawString(58, y, "САМАЯ СЛАБАЯ МЕТРИКА В ПРОФИЛЕ")
+    y -= 32
+    c.setFillColor(HexColor(LUX_TEXT))
+    c.setFont(FONT_BOLD, 28)
+    for line in wrap_text_width(c, limiter["name"], w - 116, FONT_BOLD, 28)[:2]:
+        c.drawString(58, y, line)
+        y -= 32
+
+    y -= 4
+    c.setFillColor(HexColor(LUX_TEXT_SOFT))
+    c.setFont(FONT_REGULAR, 10.5)
+    c.drawString(58, y, f"Зона: {group} · визуально: {score_status(limiter['score'])}")
+    y -= 28
+    _bar(c, 58, y, 300, visual_score, LUX_PURPLE, height=10)
+    c.setFillColor(HexColor(LUX_TEXT_MUTED))
+    c.setFont(FONT_REGULAR, 8.5)
+    c.drawString(58, y - 17, "В PDF низкие метрики показываются мягко; технический score остаётся внутри расчёта.")
+
+    cards = _limiter_plan(data, gender)
+    _lux_card(c, 58, 410, 225, 104, cards[0][0], cards[0][1], accent=LUX_PURPLE)
+    _lux_card(c, 312, 410, 225, 104, cards[1][0], cards[1][1], accent=LUX_GOLD)
+    _lux_card(c, 58, 275, 225, 120, cards[2][0], cards[2][1], accent=LUX_GOLD)
+    _lux_card(c, 312, 275, 225, 120, cards[3][0], cards[3][1], accent=LUX_PURPLE)
+
+    _lux_text(
+        c,
+        "Смысл этой страницы — не зафиксировать недостаток, а выбрать самый выгодный рычаг. В следующих разделах стрижка, брови, фото и стиль настроены так, чтобы этот фактор не становился центром внимания.",
+        58, 118, max_width=w - 116, lh=14, size=9.7, color=LUX_TEXT_SOFT,
+    )
+
+
+def _lux_potential_page(c, w, h, data, gender, page_num, total_pages):
+    _lux_header(c, w, h, "Potential", "Потенциал после внедрения", page_num, total_pages)
+    low, high = _potential_range(data["score"], len(data["weak"]))
+    limiter = _limiting_metric(data)
+    tier = data["tier"]
+    y = h - 185
+
+    c.setFillColor(HexColor(LUX_TEXT_MUTED))
+    c.setFont(FONT_BOLD, 9)
+    c.drawString(58, y, "ТЕКУЩИЙ УРОВЕНЬ")
+    c.drawString(332, y, "ПРОГНОЗИРУЕМЫЙ ДИАПАЗОН")
+    y -= 52
+    c.setFillColor(HexColor(tier["color"]))
+    c.setFont(FONT_BOLD, 42)
+    c.drawString(58, y, f"{data['score']:.2f}")
+    c.setFillColor(HexColor(LUX_GOLD))
+    c.setFont(FONT_BOLD, 35)
+    c.drawString(238, y + 2, "→")
+    c.setFillColor(HexColor(LUX_TEXT))
+    c.setFont(FONT_BOLD, 42)
+    c.drawString(332, y, f"{low:.1f}-{high:.1f}")
+    c.setFillColor(HexColor(LUX_TEXT_SOFT))
+    c.setFont(FONT_REGULAR, 10)
+    c.drawString(58, y - 24, f"tier {tier['abbr']} · {tier['name']}")
+    c.drawString(332, y - 24, "визуальный диапазон после 30 дней")
+
+    y -= 58
+    _bar(c, 58, y, 200, data["score"], tier["color"], height=10)
+    _bar(c, 332, y, 200, high, LUX_GOLD, height=10)
+
+    y -= 58
+    intro = (
+        f"Прогноз строится на текущем score {data['score']:.2f}/10, tier {tier['abbr']} "
+        f"и главном лимитере «{limiter['name']}». Это не медицинская оценка и не обещание изменения геометрии: "
+        "речь о том, как лицо может считываться после настройки подачи."
+    )
+    y = _lux_text(c, intro, 58, y, max_width=w - 116, lh=15, size=10.2, color=LUX_TEXT_SOFT)
+    y -= 24
+
+    cards = _potential_plan(data, gender)
+    _lux_card(c, 58, y, 225, 96, cards[2][0], cards[2][1], accent=LUX_GOLD)
+    _lux_card(c, 312, y, 225, 96, cards[3][0], cards[3][1], accent=LUX_PURPLE)
+    y -= 126
+    _lux_card(c, 58, y, 225, 96, "Персональные рычаги", f"1) {limiter['name']}  2) {_lux_metric_names(data['weak'][:2])}  3) акцент на {_lux_metric_names(data['strengths'][:2])}.", accent=LUX_PURPLE)
+    _lux_card(c, 312, y, 225, 96, "Как мерить прогресс", "Повторяй фото анфас и 3/4 в одинаковом свете. Сравнивай не настроение, а контур, взгляд, кожу, отёчность и то, куда первым уходит внимание.", accent=LUX_GOLD)
+
+
 def _lux_hair_page(c, w, h, data, gender, page_num, total_pages):
-    male = gender == "male"
-    weak = data["weak"]
-    strengths = data["strengths"]
-    shape_tip = "Сделай форму более вертикальной и чистой по бокам." if _has_metric(weak, "Пропорции лица", "Ширина лба") else "Сохраняй форму, которая открывает сильные зоны лица."
-    eye_tip = "Не закрывай брови и верхнюю треть тяжёлой прядью: у тебя взгляд может быть сильным визуальным акцентом." if _has_metric(strengths, "Форма глаз", "Размер глаз", "Наклон глаз") else "Открытая верхняя треть делает лицо чище и дороже."
-    items = [
-        ("Форма", f"{shape_tip} Если лицо кажется вытянутым — меньше высоты сверху; если широким — больше вертикали и чистые боковые линии."),
-        ("Объём", f"Контролируемый объём лучше случайной пышности. {eye_tip}"),
-        ("Контур", "Чистая линия висков и затылка делает лицо дороже визуально. Обновление формы каждые 3-5 недель поддерживает премиальный вид."),
-        ("Стиль", "Держи образ минималистичным: графит, чёрный, молочный, глубокие холодные оттенки. Слишком шумная укладка конкурирует с геометрией лица."),
-    ]
-    if not male:
-        items[2] = ("Контур", "Слои у лица, мягкая рамка и аккуратный объём помогают балансировать лоб, скулы и нижнюю треть без тяжёлого визуального эффекта.")
-    intro = "Причёска — главный инструмент рамки лица. Она может усилить скулы, вытянуть силуэт, смягчить нижнюю треть или, наоборот, сделать образ собраннее."
+    items = _hair_plan(data, gender)
+    intro = (
+        f"Стрижка выбирается не по моде, а по метрикам. {_primary_strength_sentence(data)} "
+        f"{_primary_limit_sentence(data)} Поэтому форма волос должна одновременно показать актив и не усилить лимитер."
+    )
     _lux_section_page(c, w, h, page_num, total_pages, "Hair", "Причёска", intro, items)
 
 
 def _lux_brows_page(c, w, h, data, gender, page_num, total_pages):
-    weak = data["weak"]
-    strengths = data["strengths"]
-    brow_focus = "Это одна из твоих зон роста, поэтому брови лучше сделать максимально чистыми и управляемыми." if _has_metric(weak, "Высота бровей", "Наклон глаз") else "Задача бровей — поддержать уже имеющуюся геометрию взгляда."
-    eye_focus = "Так как форма/размер глаз входят в сильные стороны, не перегружай взгляд: чистая бровь и мягкий свет дадут больше, чем тяжёлый контраст." if _has_metric(strengths, "Форма глаз", "Размер глаз") else "Аккуратная линия бровей визуально собирает верхнюю треть."
-    items = [
-        ("Линия", f"{brow_focus} Брови должны поддерживать направление глаз, а не спорить с ним."),
-        ("Плотность", "Не делай брови слишком графичными. Премиальный эффект — это чистая форма, натуральная плотность и отсутствие лишних волосков по нижней линии."),
-        ("Симметрия", "Если одна бровь визуально выше, корректируй не толщиной, а нижней линией и укладкой волосков прозрачным гелем."),
-        ("Взгляд", eye_focus),
-    ]
-    intro = "Брови управляют выражением лица. В Premium Plan их задача — сделать взгляд чище, увереннее и дороже, не превращая лицо в маску."
+    items = _brow_plan(data, gender)
+    eye_strength = _best_in_group(data, EYE_METRICS)
+    brow_weak = _weak_in_group(data, {"Высота бровей", "Наклон глаз", "Расстояние между глазами"})
+    marker = f"Сильный ориентир: {eye_strength['name']}." if eye_strength else f"Зона контроля: {brow_weak['name']}." if brow_weak else "Цель: чистая верхняя треть."
+    intro = f"Брови управляют выражением лица. {marker} Раздел ниже — конкретный grooming-протокол, а не общий совет."
     _lux_section_page(c, w, h, page_num, total_pages, "Brows", "Брови", intro, items)
 
 
 def _lux_skin_page(c, w, h, data, gender, page_num, total_pages):
     score = data["score"]
+    limiter = _limiting_metric(data)
+    eye_weak = _weak_in_group(data, EYE_METRICS)
+    nose_weak = _weak_in_group(data, NOSE_METRICS)
+    jaw_weak = _weak_in_group(data, JAW_METRICS)
+    eye_strength = _best_in_group(data, EYE_METRICS)
+    lip_strength = _best_in_group(data, LIP_METRICS)
     intensity = "держи уход простым и стабильным" if score >= 7 else "начни с минимальной, но регулярной базы"
+    photo_focus = (
+        f"область под глазами и брови, потому что зона «{eye_weak['name']}» чувствительна к теням"
+        if eye_weak else
+        f"центральная зона, потому что «{nose_weak['name']}» быстро усиливается бликом и широким углом"
+        if nose_weak else
+        f"нижняя треть, потому что зона «{jaw_weak['name']}» зависит от чистого контура"
+        if jaw_weak else
+        f"акцент на сильную зону «{(eye_strength or lip_strength or data['strengths'][0])['name']}»"
+    )
     items = [
-        ("База утром", f"Мягкое очищение, лёгкое увлажнение и SPF. При твоей общей оценке {score:.2f}/10 особенно важно не терять баллы из-за усталой текстуры: {intensity}."),
-        ("База вечером", "Очищение без пересушивания и восстановление барьера. Если кожа реагирует раздражением, уменьши активы и оставь стабильную простую схему."),
-        ("Тон и текстура", "Цель — не идеальная фарфоровость, а спокойная матово-сатиновая кожа без жирного блеска, шелушений и сильной красноты."),
-        ("Разбор фото", "Перед съёмкой: умыться, увлажнить кожу, убрать блеск с Т-зоны, проверить область под глазами и губы."),
+        ("База утром", f"Мягкое очищение, лёгкое увлажнение и SPF. При score {score:.2f}/10 задача — не терять визуальный уровень из-за усталой текстуры: {intensity}."),
+        ("База вечером", f"Восстановление барьера без пересушивания. Если кожа раздражена, лимитер «{limiter['name']}» будет считываться заметнее, потому что внимание уйдёт в визуальный шум."),
+        ("Тон и текстура", f"Цель — спокойная матово-сатиновая кожа. Главный фото-фокус: {photo_focus}."),
+        ("Перед съёмкой", f"Умыться, увлажнить кожу, убрать блеск с Т-зоны и проверить губы. Это помогает сильным зонам ({_lux_metric_names(data['strengths'])}) считываться первыми."),
     ]
-    intro = "Кожа — это фон для всей геометрии лица. Даже сильные пропорции выглядят слабее, если фон уставший, пересушенный или блестящий."
+    intro = f"Кожа — фон для геометрии. В твоём профиле она должна поддержать активы ({_lux_metric_names(data['strengths'])}) и не усиливать зоны роста ({_lux_metric_names(data['weak'])})."
     _lux_section_page(c, w, h, page_num, total_pages, "Skin", "Кожа", intro, items)
 
 
 def _lux_beard_page(c, w, h, data, gender, page_num, total_pages):
     weak = data["weak"]
-    lower_focus = "Нижняя треть входит в зоны роста, поэтому главный фокус — чистый контур, шея и свет." if _has_metric(weak, "Длина подбородка", "Контур подбородка", "Челюсть к ширине рта") else "Нижняя треть не требует агрессивной коррекции: достаточно поддерживать чистый контур."
+    limiter = _limiting_metric(data)
+    jaw_weak = _weak_in_group(data, JAW_METRICS)
+    jaw_strength = _best_in_group(data, JAW_METRICS)
+    lip_strength = _best_in_group(data, LIP_METRICS)
+    lower_focus = (
+        f"Нижняя треть входит в зоны роста через «{jaw_weak['name']}», поэтому главный фокус — чистый контур, шея и свет."
+        if jaw_weak else
+        f"Нижняя треть уже может работать как актив через «{jaw_strength['name']}»: важно сохранить чистую форму."
+        if jaw_strength else
+        f"Главный лимитер — «{limiter['name']}», поэтому нижняя треть должна быть аккуратной и не забирать лишнее внимание."
+    )
     if gender == "male":
         items = [
             ("Щетина 2-5 мм", f"{lower_focus} Короткая ровная щетина добавляет плотность челюсти и визуально собирает подбородок."),
-            ("Линия шеи", "Не поднимай линию бороды слишком высоко. Чистая шея и аккуратный нижний край делают контур дороже."),
-            ("Усы и рот", "Если ширина рта входит в сильные стороны, не перекрывай её тяжёлыми усами. Линия губ должна оставаться читаемой."),
-            ("Плотность", "При редком росте лучше чистое бритьё, чем неравномерная борода. Премиальность всегда в аккуратности."),
+            ("Линия шеи", f"Не поднимай линию бороды слишком высоко: при лимитере «{limiter['name']}» грязная шея быстро утяжеляет весь кадр."),
+            ("Усы и рот", f"{'Не перекрывай тяжёлыми усами сильную зону «' + lip_strength['name'] + '».' if lip_strength else 'Держи линию губ читаемой: рот не должен теряться под щетиной.'}"),
+            ("Плотность", f"Если рост неравномерный, лучше чистое бритьё. Твоя цель — усилить {_lux_metric_names(data['strengths'])}, а не показать случайную текстуру."),
         ]
     else:
         items = [
             ("Нижняя треть", f"{lower_focus} Для женского образа важны гладкость кожи, отсутствие визуального шума и мягкий контур."),
-            ("Контур", "Лёгкое контурирование под скулой и по нижней линии помогает собрать овал без тяжёлого макияжа."),
-            ("Губы", "Увлажнённые губы и чистый контур делают нижнюю треть аккуратнее, особенно на фото крупным планом."),
-            ("Минимализм", "Избегай перегруженных акцентов сразу на губах, бровях и глазах. Один главный акцент выглядит дороже."),
+            ("Контур", f"Лёгкая тень под скулой и по нижней линии уместна, если она не выводит в центр «{limiter['name']}»."),
+            ("Губы", f"{'Увлажнённые губы и мягкая полуулыбка подчеркнут сильную зону «' + lip_strength['name'] + '».' if lip_strength else 'Увлажнённые губы и чистый контур делают нижнюю треть аккуратнее на крупном плане.'}"),
+            ("Минимализм", f"Один главный акцент выглядит дороже. В твоём случае логичнее вести внимание к: {_lux_metric_names(data['strengths'][:2])}."),
         ]
-    intro = "Нижняя треть сильно влияет на ощущение зрелости, статуса и ухоженности. Здесь важны чистые границы и отсутствие случайности."
+    intro = f"Нижняя треть влияет на статус и ухоженность. Раздел настроен под твой профиль: сильные зоны — {_lux_metric_names(data['strengths'])}, лимитер — {limiter['name']}."
     _lux_section_page(c, w, h, page_num, total_pages, "Lower third", "Щетина/борода", intro, items)
 
 
 def _lux_depuff_page(c, w, h, data, page_num, total_pages):
+    eye_weak = _weak_in_group(data, EYE_METRICS)
+    jaw_weak = _weak_in_group(data, JAW_METRICS)
+    focus = "под глазами и верхняя треть" if eye_weak else "нижняя треть и линия челюсти" if jaw_weak else "скулы, глаза и общий контур"
     items = [
-        ("Сон", "7-8 часов сна и стабильное время подъёма заметно уменьшают отёчность лица. Главный эффект даёт регулярность, не разовые лайфхаки."),
-        ("Соль и вода", "Вечером уменьши солёное и алкоголь, утром выпей воду до кофе. Это простая база для более чёткого лица."),
+        ("Фокус зоны", f"У тебя depuff особенно важен для зоны: {focus}. Это помогает не маскировать сильные метрики и не усиливать лимитер."),
+        ("Сон", "7-8 часов сна и стабильное время подъёма. Главный эффект даёт регулярность, потому что лицо начинает выглядеть чётче ещё до фото."),
+        ("Соль и вода", "Вечером уменьши солёное и алкоголь, утром выпей воду до кофе. Это простая база для более собранной нижней и верхней трети."),
         ("Утренний протокол", "Холодный компресс 2-3 минуты, мягкий лимфодренаж от центра лица к ушам, затем лёгкое увлажнение."),
-        ("Бонусный PDF", "Отдельный файл по снижению отёчности отправляется вместе с Premium Plan: сохрани его как быстрый чек-лист на утро."),
+        ("Бонусный PDF", "Отдельный файл по снижению отёчности отправляется вместе с Premium Plan: используй его как чек-лист перед фото."),
     ]
-    intro = "Отёчность может скрывать скулы, глаза и линию челюсти. Работа с ней часто даёт быстрый визуальный прирост без изменения самой геометрии."
+    intro = f"Отёчность может скрывать сильные стороны: {_lux_metric_names(data['strengths'])}. Поэтому протокол ниже привязан к твоему профилю, а не является общим советом."
     _lux_section_page(c, w, h, page_num, total_pages, "Depuff", "Снижение отёчности", intro, items)
 
 
 def _lux_photo_page(c, w, h, data, page_num, total_pages):
-    weak = data["weak"]
-    strengths = data["strengths"]
-    nose_note = "Так как центральная зона входит в зоны роста, избегай 0.5x, близкой камеры и нижнего света." if _has_metric(weak, "Ширина носа", "Нос к ширине рта", "Длина носа") else "Держи камеру на комфортной дистанции, чтобы не искажать центральную зону."
-    eye_note = "Если взгляд входит в сильные стороны, делай его главным акцентом: камера чуть выше глаз и мягкий верхне-фронтальный свет." if _has_metric(strengths, "Форма глаз", "Размер глаз", "Наклон глаз") else "Свет чуть выше уровня глаз делает верхнюю треть спокойнее."
-    items = [
-        ("Свет", f"Лучший вариант — мягкий фронтальный свет из окна. {eye_note}"),
-        ("Камера", f"Держи камеру чуть выше уровня глаз, без сильного широкоугольного искажения. {nose_note}"),
-        ("Поза", "Шея длинная, подбородок слегка вперёд и вниз, плечи расслаблены. Это собирает нижнюю треть и улучшает контур."),
-        ("Выражение", "Нейтральное лицо плюс лёгкое напряжение глаз. Сильная улыбка меняет пропорции, а пустой взгляд снижает выразительность."),
-    ]
-    intro = "Фото должно показывать сильные стороны, а не случайно искажать лицо. Хороший свет и дистанция часто важнее фильтров."
+    items = _photo_plan(data)
+    intro = (
+        f"Фото должно показывать активы ({_lux_metric_names(data['strengths'])}) и не выводить в центр слабые зоны "
+        f"({_lux_metric_names(data['weak'])}). Поэтому ракурс и свет ниже привязаны к твоим метрикам."
+    )
     _lux_section_page(c, w, h, page_num, total_pages, "Photo", "Фото и позирование", intro, items)
 
 
 def _lux_style_page(c, w, h, data, gender, page_num, total_pages):
     tier = data["tier"]
+    limiter = _limiting_metric(data)
+    eye_strength = _best_in_group(data, EYE_METRICS)
+    lip_strength = _best_in_group(data, LIP_METRICS)
+    accent = "акцент на глаза" if eye_strength else "акцент на губы/улыбку" if lip_strength else "акцент на чистую рамку лица"
     items = [
-        ("Палитра", "Рабочая база Heim Face: чёрный, графит, молочный, глубокий синий, тёмный зелёный. Золото или мягкий фиолетовый — как небольшой акцент, не как главный цвет."),
-        ("Контраст", f"Для уровня {tier['abbr']} лучше работает чистый контраст без визуального шума: однотонный верх, спокойная фактура, без крупных принтов рядом с лицом."),
-        ("Вырез и ворот", "Открытая шея визуально улучшает нижнюю треть. Слишком высокий ворот может утяжелять подбородок и скрывать линию челюсти."),
-        ("Аксессуары", "Оставь один акцент: часы, цепь, серьги или очки. Несколько акцентов рядом с лицом дробят внимание и делают образ дешевле."),
+        ("Палитра", f"Для tier {tier['abbr']} используй чёрный, графит, молочный, глубокий синий. Золото или мягкий фиолетовый — небольшой акцент, чтобы поддержать premium-вид."),
+        ("Контраст", f"Главный лимитер — {limiter['name'].lower()}, поэтому не ставь рядом с лицом крупные принты и шумные воротники: они перетянут внимание."),
+        ("Вырез и ворот", "Открытая шея визуально улучшает нижнюю треть. Если низ лица в зонах роста — избегай высокого ворота и шарфов у подбородка."),
+        ("Аксессуары", f"Оставь один акцент: {accent}. Несколько акцентов рядом с лицом дробят внимание и делают образ дешевле."),
     ]
-    intro = "Одежда и цвет не меняют метрики, но сильно меняют первое впечатление. Цель — создать дорогую рамку для лица и не спорить с геометрией."
+    intro = f"Одежда должна работать на сильные зоны ({_lux_metric_names(data['strengths'])}) и не усиливать слабые ({_lux_metric_names(data['weak'])})."
     _lux_section_page(c, w, h, page_num, total_pages, "Style", "Одежда, цвета и визуальная подача", intro, items)
 
 
 def _lux_mistakes_page(c, w, h, data, page_num, total_pages):
     weak = data["weak"]
     strengths = data["strengths"]
+    limiter = _limiting_metric(data)
+    nose_weak = _weak_in_group(data, NOSE_METRICS)
+    jaw_weak = _weak_in_group(data, JAW_METRICS)
+    brow_weak = _weak_in_group(data, {"Высота бровей", "Наклон глаз", "Расстояние между глазами"})
+    lip_strength = _best_in_group(data, LIP_METRICS)
+    eye_strength = _best_in_group(data, EYE_METRICS)
+    camera_text = (
+        f"0.5x и сверхкрупный план усилят «{nose_weak['name']}». Держи дистанцию и 3/4 на 10 градусов."
+        if nose_weak else
+        f"Камера снизу прячет линию челюсти, особенно при зоне «{jaw_weak['name']}». Лучше чуть выше глаз."
+        if jaw_weak else
+        f"Слишком близкая камера может вывести в центр лимитер «{limiter['name']}». Держи объектив дальше от лица."
+    )
+    brow_text = (
+        f"Тяжёлая прядь на лбу ухудшит «{brow_weak['name']}». Открой брови и верхнюю треть."
+        if brow_weak else
+        f"Не закрывай актив «{eye_strength['name']}»: волосы и брови должны подсвечивать взгляд."
+        if eye_strength else
+        "Волосы на лице и хаотичные брови добавляют шум, даже если верхняя треть не является слабой зоной."
+    )
+    mouth_text = (
+        f"Сжатые губы скрывают сильную зону «{lip_strength['name']}». Лучше мягкая полуулыбка и расслабленная нижняя треть."
+        if lip_strength else
+        "Сжатые губы ухудшают нижнюю треть и делают выражение напряжённым. Держи рот расслабленным."
+    )
     items = [
-        ("Сверхблизкая камера", "Искажает нос, рот и нижнюю треть. Особенно избегай этого, если в зонах роста есть ширина носа, нос к ширине рта или длина носа."),
-        ("Жёсткий верхний свет", "Даёт тени под глазами, усиливает отёчность и делает кожу менее ровной. Лучше мягкий свет из окна или большой рассеянный источник."),
-        ("Закрытые брови", "Тяжёлая прядь на лбу ухудшает верхнюю треть и взгляд. Если слабая зона — высота бровей, это особенно заметно."),
-        ("Напряжённый рот", "Сжатые губы ухудшают нижнюю треть. Если сильная зона — ширина рта или губы, мягкое выражение лица покажет её лучше."),
-        ("Случайный фон", "Шумный фон снижает ощущение статуса. Чем чище кадр, тем дороже выглядит лицо."),
+        ("Сверхблизкая камера", camera_text),
+        ("Жёсткий верхний свет", f"Он даёт тени под глазами и делает кожу менее ровной. При лимитере «{limiter['name']}» лучше мягкий свет из окна."),
+        ("Закрытые брови", brow_text),
+        ("Напряжённый рот", mouth_text),
+        ("Случайный фон", f"Шумный фон спорит с активами ({_lux_metric_names(strengths)}). Чем чище кадр, тем дороже считывается лицо."),
     ]
-    if _has_metric(strengths, "Форма глаз", "Размер глаз", "Наклон глаз"):
-        items.append(("Потерянный взгляд", "Не смотри пусто мимо камеры: твоя глазная зона может быть главным активом кадра. Держи фокус и лёгкое напряжение взгляда."))
-    intro = "Эти ошибки часто портят фото сильнее, чем реальные пропорции. Убери их — и отчёт начнёт работать в твою пользу."
+    if eye_strength:
+        items.append(("Потерянный взгляд", f"Не смотри пусто мимо камеры: «{eye_strength['name']}» может быть главным активом кадра. Держи фокус и лёгкое напряжение взгляда."))
+    intro = f"Ошибки ниже подобраны под твои зоны роста ({_lux_metric_names(weak)}) и сильные стороны ({_lux_metric_names(strengths)})."
     _lux_section_page(c, w, h, page_num, total_pages, "Photo mistakes", "Ошибки, которые ухудшают лицо на фото", intro, items)
 
 
 def _lux_7day_page(c, w, h, data, page_num, total_pages):
+    limiter = _limiting_metric(data)
     items = [
-        ("День 1", "Сделай чистое фото анфас и 3/4 при дневном свете. Это контрольная точка для сравнения."),
-        ("День 2", "Приведи волосы и брови к аккуратной форме. Убери всё, что закрывает сильные зоны лица."),
+        ("День 1", f"Сделай фото анфас и 3/4. Отметь, как в кадре выглядит лимитер: {limiter['name'].lower()}."),
+        ("День 2", f"Приведи волосы к форме из раздела «Причёска». Цель — показать сильные зоны: {_lux_metric_names(data['strengths'])}."),
         ("День 3", "Настрой базовый уход: очищение, увлажнение, SPF утром; мягкое очищение и восстановление вечером."),
-        ("День 4", "Проведи depuff-утро: вода, холод, лёгкий массаж, меньше соли вечером до этого."),
-        ("День 5", "Проверь нижнюю треть: щетина/бритьё/контур должны выглядеть намеренно, а не случайно."),
-        ("День 6", "Собери 2 рабочих фото-сценария: дневной свет и вечерний мягкий свет."),
-        ("День 7", "Сравни фото с первым днём и оставь только то, что реально улучшило лицо."),
+        ("День 4", "Проведи depuff-утро и сравни контур лица с фото дня 1 при таком же свете."),
+        ("День 5", "Проверь нижнюю треть: щетина/бритьё/контур должны выглядеть намеренно, особенно если низ лица в зонах роста."),
+        ("День 6", "Собери 2 рабочих фото-сценария из персонального фото-раздела: лучший свет и лучший ракурс."),
+        ("День 7", f"Сравни фото и оставь только решения, которые усилили активы и не вывели в центр {limiter['name'].lower()}."),
     ]
-    intro = "Семидневный план нужен для быстрых визуальных улучшений и настройки рутины без перегруза."
+    intro = "Семидневный план построен вокруг твоей самой слабой метрики и топ-3 сильных сторон, поэтому он не повторяет универсальный чек-лист."
     _lux_section_page(c, w, h, page_num, total_pages, "7 days", "План на 7 дней", intro, items)
 
 
 def _lux_30day_page(c, w, h, data, page_num, total_pages):
+    limiter = _limiting_metric(data)
+    low, high = _potential_range(data["score"], len(data["weak"]))
     items = [
-        ("Неделя 1", "Стабилизируй сон, воду, кожу и базовую аккуратность волос/бровей. Цель — убрать визуальный шум."),
+        ("Неделя 1", f"Убери визуальный шум: кожа, волосы, брови, отёчность. Фокус — не усиливать {limiter['name'].lower()}."),
         ("Неделя 2", "Подбери форму причёски и нижней трети. Сделай 10 тестовых фото с разным светом и дистанцией."),
-        ("Неделя 3", "Усиль сильные стороны из отчёта: выстраивай укладку, брови и ракурсы вокруг топ-3 метрик."),
-        ("Неделя 4", "Зафиксируй личный стандарт: уход, стрижка, depuff-протокол, 2 лучших ракурса и одежда в премиальной палитре."),
+        ("Неделя 3", f"Усиль сильные стороны: {_lux_metric_names(data['strengths'])}. Ракурсы и grooming строятся вокруг них."),
+        ("Неделя 4", f"Зафиксируй личный стандарт. Целевой визуальный диапазон после внедрения: {low:.1f}-{high:.1f}/10."),
         ("После 30 дней", "Повтори фото в тех же условиях. Сравни не ощущения, а видимые изменения: кожа, контур, взгляд, симметрия кадра."),
     ]
-    intro = "Тридцатидневный план переводит разовые улучшения в устойчивый внешний стандарт."
+    intro = f"Тридцатидневный план переводит текущие {data['score']:.2f}/10 в более сильную визуальную подачу без изменения исходной геометрии."
     _lux_section_page(c, w, h, page_num, total_pages, "30 days", "План на 30 дней", intro, items)
 
 
 def _lux_morning_page(c, w, h, data, page_num, total_pages):
+    eye_strength = _best_in_group(data, EYE_METRICS)
+    limiter = _limiting_metric(data)
     items = [
         ("Вода и лицо", "Стакан воды до кофе, умывание прохладной водой, 2-3 минуты холодного компресса на зоны отёчности."),
         ("Кожа", "Лёгкое увлажнение, SPF, контроль блеска на Т-зоне. Кожа должна выглядеть спокойной, не перегруженной."),
-        ("Волосы", "Проверь форму у висков, объём сверху и то, не закрывают ли волосы брови или сильную глазную зону."),
+        ("Волосы", f"Проверь, не закрывают ли волосы актив: {eye_strength['name'] if eye_strength else data['strengths'][0]['name']}."),
         ("Брови", "Расчеши вверх и наружу, убери явные выбившиеся волоски. На фото проверь симметрию хвостиков."),
         ("Нижняя треть", "Бритьё или щетина должны выглядеть намеренно. Проверь шею, линию челюсти, губы и сухость кожи вокруг рта."),
-        ("Фото-контроль", "Сделай один тестовый кадр при дневном свете. Если лицо выглядит плоским — повернись на 10-15 градусов и подними камеру чуть выше."),
+        ("Фото-контроль", f"Сделай тестовый кадр. Если лимитер «{limiter['name']}» стал заметнее — меняй свет/ракурс до отправки фото."),
     ]
-    intro = "Этот чек-лист нужен для дней, когда важно выглядеть максимально собранно: съёмка, встреча, свидание, деловой день."
+    intro = f"Утренний чек-лист привязан к твоему профилю: актив — {data['strengths'][0]['name']}, лимитер — {limiter['name']}."
     _lux_section_page(c, w, h, page_num, total_pages, "Morning checklist", "Чек-лист утренней подготовки", intro, items)
 
 
@@ -1077,26 +1400,30 @@ def _lux_final_page(c, w, h, data, page_num, total_pages):
 
 
 def create_looksmaxxing_pdf(image_bytes, analysis_data, gender, output_path):
+    analysis_data = dict(analysis_data)
+    analysis_data["gender"] = gender
     c = canvas.Canvas(output_path, pagesize=A4)
     w, h = A4
-    total_pages = 16
+    total_pages = 18
 
     _lux_cover(c, w, h, image_bytes, analysis_data, 1, total_pages); c.showPage()
     _lux_score_page(c, w, h, analysis_data, 2, total_pages); c.showPage()
     _lux_strengths_page(c, w, h, analysis_data, 3, total_pages); c.showPage()
     _lux_growth_page(c, w, h, analysis_data, 4, total_pages); c.showPage()
-    _lux_hair_page(c, w, h, analysis_data, gender, 5, total_pages); c.showPage()
-    _lux_brows_page(c, w, h, analysis_data, gender, 6, total_pages); c.showPage()
-    _lux_skin_page(c, w, h, analysis_data, gender, 7, total_pages); c.showPage()
-    _lux_beard_page(c, w, h, analysis_data, gender, 8, total_pages); c.showPage()
-    _lux_depuff_page(c, w, h, analysis_data, 9, total_pages); c.showPage()
-    _lux_photo_page(c, w, h, analysis_data, 10, total_pages); c.showPage()
-    _lux_style_page(c, w, h, analysis_data, gender, 11, total_pages); c.showPage()
-    _lux_mistakes_page(c, w, h, analysis_data, 12, total_pages); c.showPage()
-    _lux_7day_page(c, w, h, analysis_data, 13, total_pages); c.showPage()
-    _lux_30day_page(c, w, h, analysis_data, 14, total_pages); c.showPage()
-    _lux_morning_page(c, w, h, analysis_data, 15, total_pages); c.showPage()
-    _lux_final_page(c, w, h, analysis_data, 16, total_pages)
+    _lux_limiter_page(c, w, h, analysis_data, gender, 5, total_pages); c.showPage()
+    _lux_potential_page(c, w, h, analysis_data, gender, 6, total_pages); c.showPage()
+    _lux_hair_page(c, w, h, analysis_data, gender, 7, total_pages); c.showPage()
+    _lux_brows_page(c, w, h, analysis_data, gender, 8, total_pages); c.showPage()
+    _lux_skin_page(c, w, h, analysis_data, gender, 9, total_pages); c.showPage()
+    _lux_beard_page(c, w, h, analysis_data, gender, 10, total_pages); c.showPage()
+    _lux_depuff_page(c, w, h, analysis_data, 11, total_pages); c.showPage()
+    _lux_photo_page(c, w, h, analysis_data, 12, total_pages); c.showPage()
+    _lux_style_page(c, w, h, analysis_data, gender, 13, total_pages); c.showPage()
+    _lux_mistakes_page(c, w, h, analysis_data, 14, total_pages); c.showPage()
+    _lux_7day_page(c, w, h, analysis_data, 15, total_pages); c.showPage()
+    _lux_30day_page(c, w, h, analysis_data, 16, total_pages); c.showPage()
+    _lux_morning_page(c, w, h, analysis_data, 17, total_pages); c.showPage()
+    _lux_final_page(c, w, h, analysis_data, 18, total_pages)
     c.save()
 
 
