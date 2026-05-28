@@ -12,13 +12,27 @@ PRODUCT_PREMIUM_PLAN = "premium_plan"
 FACE_REPORT_PRICE_RUB = 990
 PREMIUM_PLAN_PRICE_RUB = 1490
 
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, str(default)).strip())
+    except (TypeError, ValueError):
+        return default
+
+
+FACE_REPORT_PRICE_STARS = _env_int("FACE_REPORT_PRICE_STARS", 990)
+PREMIUM_PLAN_PRICE_STARS = _env_int("PREMIUM_PLAN_PRICE_STARS", 1490)
+
 # ================== PAYMENT PREP ==================
-# ЮKassa пока не подключается напрямую: переменные нужны для будущей интеграции.
 YOOKASSA_SHOP_ID = os.getenv("YOOKASSA_SHOP_ID", "").strip()
 YOOKASSA_SECRET_KEY = os.getenv("YOOKASSA_SECRET_KEY", "").strip()
 YOOKASSA_ENABLED = bool(YOOKASSA_SHOP_ID and YOOKASSA_SECRET_KEY)
+PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "").strip().rstrip("/")
+YOOKASSA_RETURN_URL = os.getenv(
+    "YOOKASSA_RETURN_URL",
+    PUBLIC_BASE_URL or f"https://t.me/{BOT_USERNAME.lstrip('@')}",
+).strip()
+YOOKASSA_WEBHOOK_PATH = "/yookassa/webhook"
 
-# Telegram Stars можно будет включить отдельной логикой invoice с currency="XTR".
 TELEGRAM_STARS_CURRENCY = "XTR"
 
 # ================== PALETTE ==================

@@ -4,14 +4,23 @@ import asyncio
 import logging
 import tempfile
 import threading
+import base64
+import json
+import urllib.error
+import urllib.request
 
 from dotenv import load_dotenv
 load_dotenv()
 
-from flask import Flask
+from flask import Flask, request, jsonify
 
 from aiogram import Bot, Dispatcher, F
-from aiogram.types import Message, FSInputFile, KeyboardButton, ReplyKeyboardMarkup
+from aiogram.filters import StateFilter
+from aiogram.types import (
+    Message, CallbackQuery, PreCheckoutQuery,
+    FSInputFile, KeyboardButton, ReplyKeyboardMarkup,
+    InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice,
+)
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -19,14 +28,19 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from config import (
     BOT_NAME, BOT_USERNAME,
     FACE_REPORT_PRICE_RUB, PREMIUM_PLAN_PRICE_RUB,
+    FACE_REPORT_PRICE_STARS, PREMIUM_PLAN_PRICE_STARS,
     PRODUCT_FACE_REPORT, PRODUCT_PREMIUM_PLAN,
-    YOOKASSA_ENABLED,
+    YOOKASSA_ENABLED, YOOKASSA_SHOP_ID, YOOKASSA_SECRET_KEY,
+    YOOKASSA_RETURN_URL, YOOKASSA_WEBHOOK_PATH, TELEGRAM_STARS_CURRENCY,
 )
 from analysis import analyze_face
 from pdf_builder import create_pdf_report, create_looksmaxxing_pdf
 from counters import (
     increment_counter, get_user_count, get_today_count,
-    set_selected_product, get_selected_product, clear_selected_product,
+    set_selected_product, clear_selected_product,
+    create_order, get_order, update_order_payment, mark_order_paid,
+    mark_order_failed, get_active_paid_order, consume_paid_order,
+    find_order_by_provider_payment_id,
 )
 
 
@@ -51,6 +65,40 @@ app = Flask(__name__)
 @app.route("/")
 def home():
     return f"{BOT_NAME} bot is running"
+
+
+@app.route(YOOKASSA_WEBHOOK_PATH, methods=["POST"])
+def yookassa_webhook():
+    payload = request.get_json(silent=True) or {}
+    obj = payload.get("object") or {}
+    payment_id = obj.get("id")
+    metadata = obj.get("metadata") or {}
+    order_id = metadata.get("order_id")
+    event = payload.get("event")
+    status = obj.get("status")
+
+    logger.info("YooKassa webhook event=%s status=%s payment_id=%s order_id=%s",
+                event, status, payment_id, order_id)
+
+    if not order_id and payment_id:
+        order = find_order_by_provider_payment_id(payment_id)
+        order_id = order["order_id"] if order else None
+
+    if not order_id:
+        logger.warning("YooKassa webhook without known order_id: %s", payload)
+        return jsonify({"ok": True})
+
+    if event == "payment.succeeded" or status == "succeeded":
+        verified = verify_yookassa_payment(payment_id, order_id)
+        if verified:
+            order = mark_order_paid(order_id, payment_id)
+            if order:
+                notify_paid_order_sync(order)
+    elif event == "payment.canceled" or status == "canceled":
+        mark_order_failed(order_id)
+
+    return jsonify({"ok": True})
+
 
 def run_web():
     port = int(os.environ.get("PORT", 10000))
@@ -88,15 +136,15 @@ cancel_keyboard = ReplyKeyboardMarkup(
 # ================== PRODUCTS / PAYMENT ==================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DEPUFF_GUIDE_PATH = os.path.join(BASE_DIR, "assets", "depuff_guide.pdf")
+PROVIDER_YOOKASSA = "yookassa"
+PROVIDER_STARS = "telegram_stars"
+YOOKASSA_API_URL = "https://api.yookassa.ru/v3"
 
 
 def payment_mode_text() -> str:
-    if YOOKASSA_ENABLED:
-        return "Оплата: ЮKassa подготовлена. После включения платежного обработчика здесь будет платёжная ссылка."
-    return (
-        "Оплата: тестовый режим. Ключи ЮKassa не заданы, поэтому бот не списывает деньги "
-        "и сразу открывает получение отчёта."
-    )
+    if not YOOKASSA_ENABLED:
+        return "Оплата картой и СБП появится после добавления ключей ЮKassa. Telegram Stars доступны внутри Telegram."
+    return "Доступна оплата картой, СБП через ЮKassa или Telegram Stars внутри Telegram."
 
 
 def product_title(product: str) -> str:
@@ -109,6 +157,12 @@ def product_price(product: str) -> int:
     if product == PRODUCT_PREMIUM_PLAN:
         return PREMIUM_PLAN_PRICE_RUB
     return FACE_REPORT_PRICE_RUB
+
+
+def product_stars_price(product: str) -> int:
+    if product == PRODUCT_PREMIUM_PLAN:
+        return PREMIUM_PLAN_PRICE_STARS
+    return FACE_REPORT_PRICE_STARS
 
 
 def product_description(product: str) -> str:
@@ -128,7 +182,7 @@ def product_description(product: str) -> str:
             "• план на 7 дней и план на 30 дней\n"
             "• бонусный PDF по отёчности\n\n"
             f"{payment_mode_text()}\n\n"
-            "<b>Выберите пол</b> — нормы анализа отличаются для мужчин и женщин."
+            "<b>После успешной оплаты</b> бот откроет выбор пола и примет фото для анализа."
         )
 
     return (
@@ -142,7 +196,142 @@ def product_description(product: str) -> str:
         "• точки и линии прямо на фото\n"
         "• итоговая оценка гармонии и tier\n\n"
         f"{payment_mode_text()}\n\n"
-        "<b>Выберите пол</b> — нормы анализа отличаются для мужчин и женщин."
+        "<b>После успешной оплаты</b> бот откроет выбор пола и примет фото для анализа."
+    )
+
+
+def payment_keyboard(product: str) -> InlineKeyboardMarkup:
+    rows = []
+    if YOOKASSA_ENABLED:
+        rows.extend([
+            [InlineKeyboardButton(text="Оплатить картой", callback_data=f"pay:yookassa:bank_card:{product}")],
+            [InlineKeyboardButton(text="Оплатить через СБП", callback_data=f"pay:yookassa:sbp:{product}")],
+        ])
+    rows.append([
+        InlineKeyboardButton(
+            text=f"Оплатить Telegram Stars · {product_stars_price(product)} ⭐",
+            callback_data=f"pay:stars:{product}",
+        )
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def paid_prompt(product: str) -> str:
+    return (
+        f"<b>Оплата прошла.</b>\n\n"
+        f"Тариф: <b>{product_title(product)}</b>\n"
+        "Теперь выберите пол — нормы анализа отличаются для мужчин и женщин."
+    )
+
+
+def gender_reply_markup_dict() -> dict:
+    return {
+        "keyboard": [
+            [{"text": "👨 Мужской"}, {"text": "👩 Женский"}],
+            [{"text": "◀️ Назад в меню"}],
+        ],
+        "resize_keyboard": True,
+    }
+
+
+def yookassa_auth_header() -> str:
+    raw = f"{YOOKASSA_SHOP_ID}:{YOOKASSA_SECRET_KEY}".encode("utf-8")
+    return "Basic " + base64.b64encode(raw).decode("ascii")
+
+
+def yookassa_request(method: str, path: str, body: dict | None = None,
+                     idempotence_key: str | None = None) -> dict:
+    if not YOOKASSA_ENABLED:
+        raise RuntimeError("ЮKassa не настроена: нет YOOKASSA_SHOP_ID или YOOKASSA_SECRET_KEY.")
+
+    data = json.dumps(body, ensure_ascii=False).encode("utf-8") if body is not None else None
+    req = urllib.request.Request(
+        YOOKASSA_API_URL + path,
+        data=data,
+        method=method,
+        headers={
+            "Authorization": yookassa_auth_header(),
+            "Content-Type": "application/json",
+        },
+    )
+    if idempotence_key:
+        req.add_header("Idempotence-Key", idempotence_key)
+
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode("utf-8", errors="ignore")
+        logger.error("YooKassa HTTP error %s: %s", e.code, detail)
+        raise
+
+
+def create_yookassa_payment(order: dict, method_type: str) -> dict:
+    product = order["product"]
+    amount = product_price(product)
+    body = {
+        "amount": {"value": f"{amount:.2f}", "currency": "RUB"},
+        "capture": True,
+        "payment_method_data": {"type": method_type},
+        "confirmation": {"type": "redirect", "return_url": YOOKASSA_RETURN_URL},
+        "description": f"{BOT_NAME}: {product_title(product)}",
+        "metadata": {
+            "order_id": order["order_id"],
+            "user_id": order["user_id"],
+            "product": product,
+        },
+    }
+    return yookassa_request("POST", "/payments", body, idempotence_key=order["order_id"])
+
+
+def get_yookassa_payment(payment_id: str) -> dict:
+    return yookassa_request("GET", f"/payments/{payment_id}")
+
+
+def verify_yookassa_payment(payment_id: str | None, order_id: str) -> bool:
+    if not payment_id:
+        return False
+    try:
+        payment = get_yookassa_payment(payment_id)
+    except Exception:
+        logger.exception("Failed to verify YooKassa payment %s", payment_id)
+        return False
+
+    metadata = payment.get("metadata") or {}
+    if metadata.get("order_id") != order_id:
+        logger.warning("YooKassa payment metadata mismatch: %s", payment)
+        return False
+    return payment.get("status") == "succeeded" and bool(payment.get("paid"))
+
+
+def send_bot_message_sync(chat_id: int | str, text: str, reply_markup: dict | None = None):
+    body = {
+        "chat_id": chat_id,
+        "text": text,
+        "parse_mode": "HTML",
+    }
+    if reply_markup:
+        body["reply_markup"] = reply_markup
+    data = json.dumps(body, ensure_ascii=False).encode("utf-8")
+    req = urllib.request.Request(
+        f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
+        data=data,
+        method="POST",
+        headers={"Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15):
+            return
+    except Exception:
+        logger.exception("Failed to send Telegram payment notification")
+
+
+def notify_paid_order_sync(order: dict):
+    set_selected_product(int(order["user_id"]), order["product"])
+    send_bot_message_sync(
+        order["user_id"],
+        paid_prompt(order["product"]),
+        reply_markup=gender_reply_markup_dict(),
     )
 
 
@@ -150,6 +339,16 @@ def product_description(product: str) -> str:
 @dp.message(F.text.in_({"/start", "/help", "◀️ Назад в меню"}))
 async def cmd_start(message: Message, state: FSMContext):
     await state.clear()
+    active_order = get_active_paid_order(message.from_user.id)
+    if active_order:
+        set_selected_product(message.from_user.id, active_order["product"])
+        await state.set_state(AnalysisStates.waiting_for_gender)
+        await message.answer(
+            paid_prompt(active_order["product"]),
+            parse_mode="HTML", reply_markup=gender_keyboard,
+        )
+        return
+
     clear_selected_product(message.from_user.id)
     uc = get_user_count(message.from_user.id)
     tc = get_today_count()
@@ -187,10 +386,14 @@ async def support(message: Message):
 
 
 async def start_product_flow(message: Message, state: FSMContext, product: str):
+    await state.clear()
     set_selected_product(message.from_user.id, product)
-    await state.set_state(AnalysisStates.waiting_for_gender)
     await state.update_data(product=product)
-    await message.answer(product_description(product), parse_mode="HTML", reply_markup=gender_keyboard)
+    await message.answer(
+        product_description(product),
+        parse_mode="HTML",
+        reply_markup=payment_keyboard(product),
+    )
 
 
 @dp.message(F.text == "💎 Разбор лица")
@@ -208,24 +411,173 @@ async def get_legacy_report(message: Message, state: FSMContext):
     await start_product_flow(message, state, PRODUCT_FACE_REPORT)
 
 
+@dp.callback_query(F.data.startswith("pay:"))
+async def payment_callback(callback: CallbackQuery, state: FSMContext):
+    parts = callback.data.split(":")
+    provider = parts[1]
+
+    if provider == "stars":
+        product = parts[2]
+        if product not in {PRODUCT_FACE_REPORT, PRODUCT_PREMIUM_PLAN}:
+            await callback.answer("Неизвестный тариф.", show_alert=True)
+            return
+        order = create_order(
+            callback.from_user.id,
+            product,
+            PROVIDER_STARS,
+            product_stars_price(product),
+            TELEGRAM_STARS_CURRENCY,
+        )
+        await callback.answer()
+        await bot.send_invoice(
+            chat_id=callback.message.chat.id,
+            title=f"{BOT_NAME}: {product_title(product)}",
+            description=f"Оплата тарифа «{product_title(product)}». После оплаты бот откроет загрузку фото.",
+            payload=f"stars:{order['order_id']}",
+            provider_token="",
+            currency=TELEGRAM_STARS_CURRENCY,
+            prices=[LabeledPrice(label=product_title(product), amount=product_stars_price(product))],
+        )
+        return
+
+    if provider == "yookassa":
+        method_type = parts[2]
+        product = parts[3]
+        if method_type not in {"bank_card", "sbp"} or product not in {PRODUCT_FACE_REPORT, PRODUCT_PREMIUM_PLAN}:
+            await callback.answer("Некорректный способ оплаты.", show_alert=True)
+            return
+        if not YOOKASSA_ENABLED:
+            await callback.answer("ЮKassa ещё не настроена. Можно оплатить через Telegram Stars.", show_alert=True)
+            return
+
+        order = create_order(
+            callback.from_user.id,
+            product,
+            PROVIDER_YOOKASSA,
+            product_price(product),
+            "RUB",
+            payment_method=method_type,
+        )
+        try:
+            payment = create_yookassa_payment(order, method_type)
+        except Exception:
+            mark_order_failed(order["order_id"])
+            await callback.answer("Не удалось создать платёж. Попробуйте позже или выберите Stars.", show_alert=True)
+            return
+
+        payment_id = payment.get("id")
+        confirmation_url = (payment.get("confirmation") or {}).get("confirmation_url")
+        update_order_payment(
+            order["order_id"],
+            provider_payment_id=payment_id,
+            confirmation_url=confirmation_url,
+            status=payment.get("status"),
+        )
+
+        if not confirmation_url:
+            await callback.answer("ЮKassa не вернула ссылку оплаты. Попробуйте позже.", show_alert=True)
+            return
+
+        method_title = "картой" if method_type == "bank_card" else "через СБП"
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=f"Перейти к оплате {method_title}", url=confirmation_url)],
+            [InlineKeyboardButton(text="Проверить оплату", callback_data=f"check:{order['order_id']}")],
+        ])
+        await callback.answer()
+        await callback.message.answer(
+            f"<b>Заказ создан.</b>\n\n"
+            f"Тариф: <b>{product_title(product)}</b>\n"
+            f"Сумма: <b>{product_price(product)} ₽</b>\n\n"
+            "После успешной оплаты бот автоматически откроет выбор пола. Если сообщение не пришло сразу, нажмите «Проверить оплату».",
+            parse_mode="HTML",
+            reply_markup=keyboard,
+        )
+
+
+@dp.callback_query(F.data.startswith("check:"))
+async def check_payment_callback(callback: CallbackQuery, state: FSMContext):
+    order_id = callback.data.split(":", 1)[1]
+    order = get_order(order_id)
+    if not order or order.get("user_id") != str(callback.from_user.id):
+        await callback.answer("Заказ не найден.", show_alert=True)
+        return
+
+    if order.get("status") == "paid":
+        await state.set_state(AnalysisStates.waiting_for_gender)
+        set_selected_product(callback.from_user.id, order["product"])
+        await callback.answer("Оплата уже подтверждена.")
+        await callback.message.answer(paid_prompt(order["product"]), parse_mode="HTML", reply_markup=gender_keyboard)
+        return
+
+    payment_id = order.get("provider_payment_id")
+    if order.get("provider") == PROVIDER_YOOKASSA and verify_yookassa_payment(payment_id, order_id):
+        order = mark_order_paid(order_id, payment_id)
+        await state.set_state(AnalysisStates.waiting_for_gender)
+        await callback.answer("Оплата подтверждена.")
+        await callback.message.answer(paid_prompt(order["product"]), parse_mode="HTML", reply_markup=gender_keyboard)
+        return
+
+    await callback.answer("Оплата пока не подтверждена.", show_alert=True)
+
+
+@dp.pre_checkout_query()
+async def pre_checkout(pre_checkout_query: PreCheckoutQuery):
+    payload = pre_checkout_query.invoice_payload or ""
+    if not payload.startswith("stars:"):
+        await pre_checkout_query.answer(ok=False, error_message="Некорректный платёж.")
+        return
+
+    order = get_order(payload.split(":", 1)[1])
+    if not order or order.get("provider") != PROVIDER_STARS or order.get("status") != "pending":
+        await pre_checkout_query.answer(ok=False, error_message="Заказ не найден или уже обработан.")
+        return
+
+    expected_amount = product_stars_price(order["product"])
+    if pre_checkout_query.currency != TELEGRAM_STARS_CURRENCY or pre_checkout_query.total_amount != expected_amount:
+        await pre_checkout_query.answer(ok=False, error_message="Сумма платежа не совпадает с заказом.")
+        return
+
+    await pre_checkout_query.answer(ok=True)
+
+
+@dp.message(F.successful_payment)
+async def successful_payment(message: Message, state: FSMContext):
+    payment = message.successful_payment
+    payload = payment.invoice_payload or ""
+    if not payload.startswith("stars:"):
+        return
+
+    order_id = payload.split(":", 1)[1]
+    order = mark_order_paid(order_id, payment.telegram_payment_charge_id)
+    if not order:
+        await message.answer("Оплата получена, но заказ не найден. Напишите в техподдержку.")
+        return
+
+    set_selected_product(message.from_user.id, order["product"])
+    await state.set_state(AnalysisStates.waiting_for_gender)
+    await message.answer(paid_prompt(order["product"]), parse_mode="HTML", reply_markup=gender_keyboard)
+
+
 @dp.message(AnalysisStates.waiting_for_gender, F.text.in_({"👨 Мужской", "👩 Женский"}))
 async def choose_gender(message: Message, state: FSMContext):
-    product = get_selected_product(message.from_user.id)
-    if not product:
+    active_order = get_active_paid_order(message.from_user.id)
+    if not active_order:
         await state.clear()
         await message.answer(
-            "Сначала выберите тариф в главном меню: <b>💎 Разбор лица</b> или <b>👑 Premium Plan</b>.",
+            "Сначала оплатите тариф в главном меню: <b>💎 Разбор лица</b> или <b>👑 Premium Plan</b>.",
             parse_mode="HTML", reply_markup=main_keyboard,
         )
         return
 
+    product = active_order["product"]
+    set_selected_product(message.from_user.id, product)
     gender = "male" if "Мужской" in message.text else "female"
-    await state.update_data(gender=gender, product=product)
+    await state.update_data(gender=gender, product=product, order_id=active_order["order_id"])
     await state.set_state(AnalysisStates.waiting_for_photo)
     word = "мужской" if gender == "male" else "женский"
     await message.answer(
         f"Пол выбран: <b>{word}</b>\n"
-        f"Тариф: <b>{product_title(product)}</b> · {product_price(product)} ₽\n\n"
+        f"Тариф: <b>{product_title(product)}</b> · оплачен\n\n"
         "<b>Отправьте фото лица.</b>\n\n"
         "Требования:\n"
         "• Строго анфас (прямо в камеру)\n"
@@ -243,19 +595,51 @@ async def wrong_gender(message: Message):
                          reply_markup=gender_keyboard)
 
 
+@dp.message(StateFilter(None), F.text.in_({"👨 Мужской", "👩 Женский"}))
+async def choose_gender_after_webhook(message: Message, state: FSMContext):
+    active_order = get_active_paid_order(message.from_user.id)
+    if not active_order:
+        await message.answer(
+            "Сначала оплатите тариф в главном меню: <b>💎 Разбор лица</b> или <b>👑 Premium Plan</b>.",
+            parse_mode="HTML", reply_markup=main_keyboard,
+        )
+        return
+
+    product = active_order["product"]
+    set_selected_product(message.from_user.id, product)
+    gender = "male" if "Мужской" in message.text else "female"
+    await state.update_data(gender=gender, product=product, order_id=active_order["order_id"])
+    await state.set_state(AnalysisStates.waiting_for_photo)
+    word = "мужской" if gender == "male" else "женский"
+    await message.answer(
+        f"Пол выбран: <b>{word}</b>\n"
+        f"Тариф: <b>{product_title(product)}</b> · оплачен\n\n"
+        "<b>Отправьте фото лица.</b>\n\n"
+        "Требования:\n"
+        "• Строго анфас (прямо в камеру)\n"
+        "• Нейтральное выражение, рот закрыт\n"
+        "• Хорошее равномерное освещение\n"
+        "• Без очков, маски, головного убора\n"
+        "• Волосы не закрывают лоб и брови",
+        parse_mode="HTML", reply_markup=cancel_keyboard,
+    )
+
+
 async def process_image(message: Message, image_bytes: bytes, state: FSMContext):
     data   = await state.get_data()
     gender = data.get("gender", "male")
-    product = get_selected_product(message.from_user.id)
+    active_order = get_active_paid_order(message.from_user.id)
 
-    if not product:
+    if not active_order:
         await state.clear()
+        clear_selected_product(message.from_user.id)
         await message.answer(
-            "Для начала выберите тариф в главном меню. После этого я приму фото и соберу PDF.",
+            "Для начала оплатите тариф в главном меню. После оплаты я приму фото и соберу PDF.",
             reply_markup=main_keyboard,
         )
         return
 
+    product = active_order["product"]
     await message.answer(
         f"<b>Анализирую лицо для тарифа «{product_title(product)}»...</b>\n\n"
         "Обычно это занимает до 30 секунд.",
@@ -281,8 +665,6 @@ async def process_image(message: Message, image_bytes: bytes, state: FSMContext)
                 looks_pdf_path = tmp.name
             temp_paths.append(looks_pdf_path)
             create_looksmaxxing_pdf(image_bytes, analysis, gender, looks_pdf_path)
-
-        increment_counter(message.from_user.id, product)
 
         tier = analysis["tier"]
         await message.answer(
@@ -318,6 +700,8 @@ async def process_image(message: Message, image_bytes: bytes, state: FSMContext)
                 reply_markup=main_keyboard,
             )
 
+        increment_counter(message.from_user.id, product)
+        consume_paid_order(active_order["order_id"])
         clear_selected_product(message.from_user.id)
         await state.clear()
 
@@ -363,16 +747,26 @@ async def wrong_state_photo(message: Message):
 
 @dp.message(F.photo)
 async def photo_no_state(message: Message):
+    active_order = get_active_paid_order(message.from_user.id)
+    if active_order:
+        set_selected_product(message.from_user.id, active_order["product"])
+        await message.answer(paid_prompt(active_order["product"]), parse_mode="HTML", reply_markup=gender_keyboard)
+        return
     await message.answer(
-        "Сначала выберите тариф в главном меню: <b>💎 Разбор лица</b> или <b>👑 Premium Plan</b>.",
+        "Сначала оплатите тариф в главном меню: <b>💎 Разбор лица</b> или <b>👑 Premium Plan</b>.",
         parse_mode="HTML", reply_markup=main_keyboard,
     )
 
 
 @dp.message(F.document)
 async def doc_no_state(message: Message):
+    active_order = get_active_paid_order(message.from_user.id)
+    if active_order:
+        set_selected_product(message.from_user.id, active_order["product"])
+        await message.answer(paid_prompt(active_order["product"]), parse_mode="HTML", reply_markup=gender_keyboard)
+        return
     await message.answer(
-        "Сначала выберите тариф в главном меню: <b>💎 Разбор лица</b> или <b>👑 Premium Plan</b>.",
+        "Сначала оплатите тариф в главном меню: <b>💎 Разбор лица</b> или <b>👑 Premium Plan</b>.",
         parse_mode="HTML", reply_markup=main_keyboard,
     )
 
@@ -380,7 +774,7 @@ async def doc_no_state(message: Message):
 @dp.message()
 async def fallback(message: Message):
     await message.answer(
-        "Чтобы начать, выберите тариф: <b>💎 Разбор лица</b> или <b>👑 Premium Plan</b>.",
+        "Чтобы начать, выберите и оплатите тариф: <b>💎 Разбор лица</b> или <b>👑 Premium Plan</b>.",
         parse_mode="HTML", reply_markup=main_keyboard,
     )
 
