@@ -177,7 +177,8 @@ def product_description(product: str) -> str:
     if product == PRODUCT_PREMIUM_PLAN:
         return (
             f"<b>👑 Premium Plan</b>\n"
-            f"Цена: <b>{PREMIUM_PLAN_PRICE_RUB} ₽</b>\n\n"
+            f"Карта / СБП: <b>{PREMIUM_PLAN_PRICE_RUB} ₽</b>\n"
+            f"Telegram Stars: <b>{PREMIUM_PLAN_PRICE_STARS} ⭐</b>\n\n"
             "Премиальный пакет для тех, кто хочет не только цифры, но и понятный план улучшения образа.\n\n"
             "<b>Внутри:</b>\n"
             "• 23-страничный PDF-разбор лица\n"
@@ -195,7 +196,8 @@ def product_description(product: str) -> str:
 
     return (
         f"<b>💎 Разбор лица</b>\n"
-        f"Цена: <b>{FACE_REPORT_PRICE_RUB} ₽</b>\n\n"
+        f"Карта / СБП: <b>{FACE_REPORT_PRICE_RUB} ₽</b>\n"
+        f"Telegram Stars: <b>{FACE_REPORT_PRICE_STARS} ⭐</b>\n\n"
         "Точный математический разбор геометрии лица в стиле Heim Face: чёрный premium, золото, графит и чистые выводы без шума.\n\n"
         "<b>Внутри:</b>\n"
         "• 23-страничный PDF-разбор лица\n"
@@ -217,7 +219,7 @@ def payment_keyboard(product: str) -> InlineKeyboardMarkup:
         ])
     rows.append([
         InlineKeyboardButton(
-            text=f"Оплатить Telegram Stars · {product_stars_price(product)} ⭐",
+            text=f"Оплатить Stars · {product_stars_price(product)} ⭐",
             callback_data=f"pay:stars:{product}",
         )
     ])

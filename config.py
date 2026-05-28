@@ -20,8 +20,8 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
-FACE_REPORT_PRICE_STARS = _env_int("FACE_REPORT_PRICE_STARS", 990)
-PREMIUM_PLAN_PRICE_STARS = _env_int("PREMIUM_PLAN_PRICE_STARS", 1490)
+FACE_REPORT_PRICE_STARS = _env_int("FACE_REPORT_PRICE_STARS", 1190)
+PREMIUM_PLAN_PRICE_STARS = _env_int("PREMIUM_PLAN_PRICE_STARS", 1790)
 
 # ================== PAYMENT PREP ==================
 YOOKASSA_SHOP_ID = os.getenv("YOOKASSA_SHOP_ID", "").strip()
