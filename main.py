@@ -16,10 +16,18 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 
-from config import BOT_NAME, BOT_USERNAME
+from config import (
+    BOT_NAME, BOT_USERNAME,
+    FACE_REPORT_PRICE_RUB, PREMIUM_PLAN_PRICE_RUB,
+    PRODUCT_FACE_REPORT, PRODUCT_PREMIUM_PLAN,
+    YOOKASSA_ENABLED,
+)
 from analysis import analyze_face
-from pdf_builder import create_pdf_report
-from counters import increment_counter, get_user_count, get_today_count
+from pdf_builder import create_pdf_report, create_looksmaxxing_pdf
+from counters import (
+    increment_counter, get_user_count, get_today_count,
+    set_selected_product, get_selected_product, clear_selected_product,
+)
 
 
 # ================== LOGGING ==================
@@ -58,7 +66,8 @@ class AnalysisStates(StatesGroup):
 # ================== KEYBOARDS ==================
 main_keyboard = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text="💠 Хочу получить свой разбор")],
+        [KeyboardButton(text="💎 Разбор лица")],
+        [KeyboardButton(text="👑 Premium Plan")],
         [KeyboardButton(text="Что это?"), KeyboardButton(text="Техподдержка")],
     ],
     resize_keyboard=True,
@@ -76,18 +85,80 @@ cancel_keyboard = ReplyKeyboardMarkup(
 )
 
 
+# ================== PRODUCTS / PAYMENT ==================
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DEPUFF_GUIDE_PATH = os.path.join(BASE_DIR, "assets", "depuff_guide.pdf")
+
+
+def payment_mode_text() -> str:
+    if YOOKASSA_ENABLED:
+        return "Оплата: ЮKassa подготовлена. После включения платежного обработчика здесь будет платёжная ссылка."
+    return (
+        "Оплата: тестовый режим. Ключи ЮKassa не заданы, поэтому бот не списывает деньги "
+        "и сразу открывает получение отчёта."
+    )
+
+
+def product_title(product: str) -> str:
+    if product == PRODUCT_PREMIUM_PLAN:
+        return "Premium Plan"
+    return "Разбор лица"
+
+
+def product_price(product: str) -> int:
+    if product == PRODUCT_PREMIUM_PLAN:
+        return PREMIUM_PLAN_PRICE_RUB
+    return FACE_REPORT_PRICE_RUB
+
+
+def product_description(product: str) -> str:
+    if product == PRODUCT_PREMIUM_PLAN:
+        return (
+            f"<b>👑 Premium Plan</b>\n"
+            f"Цена: <b>{PREMIUM_PLAN_PRICE_RUB} ₽</b>\n\n"
+            "Премиальный пакет для тех, кто хочет не только цифры, но и понятный план улучшения образа.\n\n"
+            "<b>Внутри:</b>\n"
+            "• 23-страничный PDF-разбор лица\n"
+            "• 20 метрик, симметрия, пропорции, точки и линии на лице\n"
+            "• итоговая оценка гармонии и tier\n"
+            "• отдельный PDF «Луксмаксинг-план»\n"
+            "• рекомендации по причёске, коже, бровям и нижней трети\n"
+            "• план по снижению отёчности\n"
+            "• советы по фото и позированию\n"
+            "• план на 7 дней и план на 30 дней\n"
+            "• бонусный PDF по отёчности\n\n"
+            f"{payment_mode_text()}\n\n"
+            "<b>Выберите пол</b> — нормы анализа отличаются для мужчин и женщин."
+        )
+
+    return (
+        f"<b>💎 Разбор лица</b>\n"
+        f"Цена: <b>{FACE_REPORT_PRICE_RUB} ₽</b>\n\n"
+        "Точный математический разбор геометрии лица в стиле Heim Face: чёрный premium, золото, графит и чистые выводы без шума.\n\n"
+        "<b>Внутри:</b>\n"
+        "• 23-страничный PDF-разбор лица\n"
+        "• 20 ключевых метрик\n"
+        "• симметрия и пропорции\n"
+        "• точки и линии прямо на фото\n"
+        "• итоговая оценка гармонии и tier\n\n"
+        f"{payment_mode_text()}\n\n"
+        "<b>Выберите пол</b> — нормы анализа отличаются для мужчин и женщин."
+    )
+
+
 # ================== HANDLERS ==================
 @dp.message(F.text.in_({"/start", "/help", "◀️ Назад в меню"}))
 async def cmd_start(message: Message, state: FSMContext):
     await state.clear()
+    clear_selected_product(message.from_user.id)
     uc = get_user_count(message.from_user.id)
     tc = get_today_count()
     await message.answer(
-        "📍 <b>Главное меню</b>\n\n"
-        f"<b>{BOT_NAME}</b> математически измеряет, насколько гармонично "
-        "черты твоего лица сочетаются друг с другом.\n\n"
-        f"Твой баланс: <b>{uc} разборов</b>\n"
-        f"Сегодня пользователи провели: <b>{tc} разборов</b>",
+        "<b>Heim Face</b>\n"
+        "Математический разбор лица в премиальном формате: геометрия, симметрия, пропорции и понятный итоговый tier.\n\n"
+        f"Ваши готовые разборы: <b>{uc}</b>\n"
+        f"Сегодня проведено разборов: <b>{tc}</b>\n\n"
+        "Выберите тариф:",
         parse_mode="HTML", reply_markup=main_keyboard,
     )
 
@@ -95,17 +166,13 @@ async def cmd_start(message: Message, state: FSMContext):
 @dp.message(F.text == "Что это?")
 async def what_is_this(message: Message):
     await message.answer(
-        "📍 <b>Главное меню › Что это</b>\n\n"
-        f"<b>{BOT_NAME}</b> — сервис математической оценки гармонии пропорций лица.\n\n"
-        "🔬 Алгоритм определяет ключевые точки лица, рассчитывает 20 "
-        "антропометрических метрик и сравнивает их с нормами отдельно для мужчин и женщин.\n\n"
-        "📄 В PDF-отчёте на 23 страницы:\n"
-        "• Итоговая оценка, уровень и tier\n"
-        "• Профиль метрик с радар-чартом\n"
-        "• 20 страниц с разбором каждой метрики\n"
-        "• Визуализация измерений прямо на фото\n"
-        "• Сильные стороны и зоны потенциала\n"
-        "• Персональные рекомендации",
+        "<b>Что такое Heim Face</b>\n\n"
+        "Это сервис математической оценки гармонии лица. Алгоритм находит ключевые точки, "
+        "считает 20 антропометрических метрик и сравнивает их с нормами отдельно для мужчин и женщин.\n\n"
+        "<b>Тарифы:</b>\n"
+        f"💎 Разбор лица — <b>{FACE_REPORT_PRICE_RUB} ₽</b>: основной PDF на 23 страницы.\n"
+        f"👑 Premium Plan — <b>{PREMIUM_PLAN_PRICE_RUB} ₽</b>: основной PDF, луксмаксинг-план и бонус по отёчности.\n\n"
+        "Формат спокойный и премиальный: чёрный, золото, графит, без агрессивных обещаний.",
         parse_mode="HTML",
     )
 
@@ -113,40 +180,53 @@ async def what_is_this(message: Message):
 @dp.message(F.text == "Техподдержка")
 async def support(message: Message):
     await message.answer(
-        "📍 <b>Главное меню › Техподдержка</b>\n\n"
-        "По всем вопросам напишите администратору проекта.",
+        "<b>Техподдержка</b>\n\n"
+        f"По вопросам оплаты, отчётов и доступа напишите администратору проекта или проверьте бота {BOT_USERNAME}.",
         parse_mode="HTML",
     )
 
 
-@dp.message(F.text == "💠 Хочу получить свой разбор")
-async def get_report(message: Message, state: FSMContext):
+async def start_product_flow(message: Message, state: FSMContext, product: str):
+    set_selected_product(message.from_user.id, product)
     await state.set_state(AnalysisStates.waiting_for_gender)
-    await message.answer(
-        "📍 <b>Главное меню › Разбор</b>\n\n"
-        "⚜️ <b>1 полный разбор лица</b>\n\n"
-        "📚 <b>Что входит:</b>\n"
-        "• Персональный PDF-отчёт на 23 страницы\n"
-        "• Tier-уровень внешности\n"
-        "• Разбор 20 ключевых метрик с нормами для твоего пола\n"
-        "• Визуализация измерений на фото\n"
-        "• Подробное объяснение каждой метрики\n"
-        "• Анализ сильных сторон и зон потенциала\n"
-        "• Персональные рекомендации\n\n"
-        "👤 <b>Выберите ваш пол</b> — алгоритм использует разные нормы:",
-        parse_mode="HTML", reply_markup=gender_keyboard,
-    )
+    await state.update_data(product=product)
+    await message.answer(product_description(product), parse_mode="HTML", reply_markup=gender_keyboard)
+
+
+@dp.message(F.text == "💎 Разбор лица")
+async def get_face_report(message: Message, state: FSMContext):
+    await start_product_flow(message, state, PRODUCT_FACE_REPORT)
+
+
+@dp.message(F.text == "👑 Premium Plan")
+async def get_premium_plan(message: Message, state: FSMContext):
+    await start_product_flow(message, state, PRODUCT_PREMIUM_PLAN)
+
+
+@dp.message(F.text == "💠 Хочу получить свой разбор")
+async def get_legacy_report(message: Message, state: FSMContext):
+    await start_product_flow(message, state, PRODUCT_FACE_REPORT)
 
 
 @dp.message(AnalysisStates.waiting_for_gender, F.text.in_({"👨 Мужской", "👩 Женский"}))
 async def choose_gender(message: Message, state: FSMContext):
+    product = get_selected_product(message.from_user.id)
+    if not product:
+        await state.clear()
+        await message.answer(
+            "Сначала выберите тариф в главном меню: <b>💎 Разбор лица</b> или <b>👑 Premium Plan</b>.",
+            parse_mode="HTML", reply_markup=main_keyboard,
+        )
+        return
+
     gender = "male" if "Мужской" in message.text else "female"
-    await state.update_data(gender=gender)
+    await state.update_data(gender=gender, product=product)
     await state.set_state(AnalysisStates.waiting_for_photo)
     word = "мужской" if gender == "male" else "женский"
     await message.answer(
-        f"✅ Пол выбран: <b>{word}</b>\n\n"
-        "📸 <b>Отправьте фото лица.</b>\n\n"
+        f"Пол выбран: <b>{word}</b>\n"
+        f"Тариф: <b>{product_title(product)}</b> · {product_price(product)} ₽\n\n"
+        "<b>Отправьте фото лица.</b>\n\n"
         "Требования:\n"
         "• Строго анфас (прямо в камеру)\n"
         "• Нейтральное выражение, рот закрыт\n"
@@ -159,55 +239,99 @@ async def choose_gender(message: Message, state: FSMContext):
 
 @dp.message(AnalysisStates.waiting_for_gender)
 async def wrong_gender(message: Message):
-    await message.answer("Пожалуйста, выберите пол кнопкой ниже 👇",
+    await message.answer("Пожалуйста, выберите пол кнопкой ниже.",
                          reply_markup=gender_keyboard)
 
 
 async def process_image(message: Message, image_bytes: bytes, state: FSMContext):
     data   = await state.get_data()
     gender = data.get("gender", "male")
+    product = get_selected_product(message.from_user.id)
 
-    await message.answer("⏳ <b>Анализирую лицо...</b>\n\nЭто займёт до 30 секунд.",
-                         parse_mode="HTML")
+    if not product:
+        await state.clear()
+        await message.answer(
+            "Для начала выберите тариф в главном меню. После этого я приму фото и соберу PDF.",
+            reply_markup=main_keyboard,
+        )
+        return
+
+    await message.answer(
+        f"<b>Анализирую лицо для тарифа «{product_title(product)}»...</b>\n\n"
+        "Обычно это занимает до 30 секунд.",
+        parse_mode="HTML",
+    )
 
     analysis, error = analyze_face(image_bytes, gender)
     if error:
-        await message.answer(f"❌ {error}\n\nПопробуйте другое фото.",
+        await message.answer(f"{error}\n\nПопробуйте другое фото.",
                              reply_markup=cancel_keyboard)
         return
 
+    temp_paths = []
     try:
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-            pdf_path = tmp.name
-        create_pdf_report(image_bytes, analysis, gender, pdf_path)
-        increment_counter(message.from_user.id)
+            face_pdf_path = tmp.name
+        temp_paths.append(face_pdf_path)
+        create_pdf_report(image_bytes, analysis, gender, face_pdf_path)
+
+        looks_pdf_path = None
+        if product == PRODUCT_PREMIUM_PLAN:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+                looks_pdf_path = tmp.name
+            temp_paths.append(looks_pdf_path)
+            create_looksmaxxing_pdf(image_bytes, analysis, gender, looks_pdf_path)
+
+        increment_counter(message.from_user.id, product)
 
         tier = analysis["tier"]
         await message.answer(
-            "✅ <b>Разбор завершён!</b>\n\n"
+            "<b>Разбор готов.</b>\n\n"
             f"Итоговая оценка: <b>{analysis['score']:.2f} / 10</b>\n"
             f"Уровень: <b>{analysis['level']}</b>\n"
             f"Tier: <b>{tier['abbr']} · {tier['name']}</b>\n\n"
-            "Полный отчёт ниже ↓",
+            f"Тариф: <b>{product_title(product)}</b>",
             parse_mode="HTML",
         )
-        await message.answer_document(
-            FSInputFile(pdf_path, filename=f"Отчёт {BOT_NAME}.pdf"),
-            reply_markup=main_keyboard,
-        )
-        await state.clear()
 
-        try:
-            os.remove(pdf_path)
-        except OSError:
-            pass
+        if product == PRODUCT_PREMIUM_PLAN:
+            await message.answer_document(
+                FSInputFile(face_pdf_path, filename=f"Разбор лица {BOT_NAME}.pdf"),
+            )
+            await message.answer_document(
+                FSInputFile(looks_pdf_path, filename="Луксмаксинг-план Heim Face.pdf"),
+            )
+            if os.path.exists(DEPUFF_GUIDE_PATH):
+                await message.answer_document(
+                    FSInputFile(DEPUFF_GUIDE_PATH, filename="Бонус по отёчности Heim Face.pdf"),
+                    reply_markup=main_keyboard,
+                )
+            else:
+                await message.answer(
+                    "Основные PDF отправлены. Бонусный файл по отёчности не найден на сервере.",
+                    reply_markup=main_keyboard,
+                )
+        else:
+            await message.answer_document(
+                FSInputFile(face_pdf_path, filename=f"Разбор лица {BOT_NAME}.pdf"),
+                reply_markup=main_keyboard,
+            )
+
+        clear_selected_product(message.from_user.id)
+        await state.clear()
 
     except Exception as e:
         logger.exception("PDF generation failed")
         await message.answer(
-            f"❌ Ошибка при создании отчёта: {str(e)[:200]}\n\nПопробуйте ещё раз.",
+            f"Ошибка при создании отчёта: {str(e)[:200]}\n\nПопробуйте ещё раз.",
             reply_markup=cancel_keyboard,
         )
+    finally:
+        for path in temp_paths:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
 
 
 @dp.message(AnalysisStates.waiting_for_photo, F.photo)
@@ -223,7 +347,7 @@ async def handle_photo_state(message: Message, state: FSMContext):
 async def handle_doc_state(message: Message, state: FSMContext):
     doc = message.document
     if not doc.mime_type or not doc.mime_type.startswith("image/"):
-        await message.answer("📎 Это не изображение. Отправьте фото.")
+        await message.answer("Это не изображение. Отправьте фото лица.")
         return
     file = await bot.get_file(doc.file_id)
     buf  = io.BytesIO()
@@ -233,13 +357,13 @@ async def handle_doc_state(message: Message, state: FSMContext):
 
 @dp.message(AnalysisStates.waiting_for_photo)
 async def wrong_state_photo(message: Message):
-    await message.answer("📸 Жду фото лица.", reply_markup=cancel_keyboard)
+    await message.answer("Жду фото лица для выбранного тарифа.", reply_markup=cancel_keyboard)
 
 
 @dp.message(F.photo)
 async def photo_no_state(message: Message):
     await message.answer(
-        "👋 Чтобы получить разбор, нажмите <b>«💠 Хочу получить свой разбор»</b>.",
+        "Сначала выберите тариф в главном меню: <b>💎 Разбор лица</b> или <b>👑 Premium Plan</b>.",
         parse_mode="HTML", reply_markup=main_keyboard,
     )
 
@@ -247,7 +371,7 @@ async def photo_no_state(message: Message):
 @dp.message(F.document)
 async def doc_no_state(message: Message):
     await message.answer(
-        "👋 Чтобы получить разбор, нажмите <b>«💠 Хочу получить свой разбор»</b>.",
+        "Сначала выберите тариф в главном меню: <b>💎 Разбор лица</b> или <b>👑 Premium Plan</b>.",
         parse_mode="HTML", reply_markup=main_keyboard,
     )
 
@@ -255,7 +379,7 @@ async def doc_no_state(message: Message):
 @dp.message()
 async def fallback(message: Message):
     await message.answer(
-        "📸 Чтобы начать — нажмите <b>«💠 Хочу получить свой разбор»</b>.",
+        "Чтобы начать, выберите тариф: <b>💎 Разбор лица</b> или <b>👑 Premium Plan</b>.",
         parse_mode="HTML", reply_markup=main_keyboard,
     )
 

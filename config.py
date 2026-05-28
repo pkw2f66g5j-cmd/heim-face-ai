@@ -1,7 +1,25 @@
+import os
+
 # ================== BRAND ==================
 BOT_NAME = "Heim Face"
 BOT_USERNAME = "@heim_face_bot"
 TOTAL_PAGES = 23
+
+# ================== PRODUCTS ==================
+PRODUCT_FACE_REPORT = "face_report"
+PRODUCT_PREMIUM_PLAN = "premium_plan"
+
+FACE_REPORT_PRICE_RUB = 990
+PREMIUM_PLAN_PRICE_RUB = 1490
+
+# ================== PAYMENT PREP ==================
+# ЮKassa пока не подключается напрямую: переменные нужны для будущей интеграции.
+YOOKASSA_SHOP_ID = os.getenv("YOOKASSA_SHOP_ID", "").strip()
+YOOKASSA_SECRET_KEY = os.getenv("YOOKASSA_SECRET_KEY", "").strip()
+YOOKASSA_ENABLED = bool(YOOKASSA_SHOP_ID and YOOKASSA_SECRET_KEY)
+
+# Telegram Stars можно будет включить отдельной логикой invoice с currency="XTR".
+TELEGRAM_STARS_CURRENCY = "XTR"
 
 # ================== PALETTE ==================
 COLOR_BG         = "#14101A"

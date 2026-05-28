@@ -449,3 +449,18 @@ def generate_recommendations(data, gender):
     ])
     improvements.extend(extra_tips)
     return strengths, improvements
+
+
+# ================== PREMIUM PLAN TEXTS ==================
+def generate_premium_focus_text(data):
+    strengths = ", ".join(m["name"].lower() for m in data["strengths"])
+    weak = ", ".join(m["name"].lower() for m in data["weak"])
+    best = data["strengths"][0]
+    growth = data["weak"][0]
+    focus = (
+        f"Premium Plan переводит метрики в практичный план внешнего образа. "
+        f"Главные сильные стороны: {strengths}. Зоны, где мягкая визуальная настройка даст максимум эффекта: {weak}."
+    )
+    best_text = f"{best['name']} · {best['score']:.2f}/10. Эту зону стоит подчёркивать светом, укладкой и ракурсом."
+    growth_text = f"{growth['name']} · {growth['score']:.2f}/10. Эту зону лучше улучшать через аккуратный grooming, уход и фото-подачу."
+    return focus, best_text, growth_text

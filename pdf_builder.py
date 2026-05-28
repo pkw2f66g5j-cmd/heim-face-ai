@@ -22,7 +22,7 @@ from config import (
     COLOR_TEXT_MUTED, COLOR_BAR_BG, COLOR_LINE, METRIC_COLORS,
 )
 from analysis import face_mesh
-from texts import generate_metric_text, generate_recommendations
+from texts import generate_metric_text, generate_recommendations, generate_premium_focus_text
 
 
 # ================== FONTS ==================
@@ -524,6 +524,313 @@ def _recommendations(c, w, h, data, gender):
     c.setFillColor(HexColor(COLOR_TEXT_MUTED)); c.setFont(FONT_REGULAR, 9)
     c.drawString(60, 50, f"Дата разбора: {data['date']}")
     _footer(c, w, TOTAL_PAGES)
+
+
+# ================== PREMIUM PDF: LOOKSMAXXING PLAN ==================
+LUX_BG = "#0B0B0D"
+LUX_PANEL = "#17161A"
+LUX_PANEL_SOFT = "#201D24"
+LUX_GOLD = "#D4AF37"
+LUX_GOLD_SOFT = "#E8D5A0"
+LUX_TEXT = "#F4EEE2"
+LUX_TEXT_SOFT = "#BDB2A1"
+LUX_TEXT_MUTED = "#756C62"
+LUX_LINE = "#3B3430"
+
+
+def _lux_bg(c, w, h):
+    c.setFillColor(HexColor(LUX_BG))
+    c.rect(0, 0, w, h, fill=1, stroke=0)
+    c.setFillColor(HexColor("#121014"))
+    c.rect(0, h - 150, w, 150, fill=1, stroke=0)
+    c.setFillColor(HexColor(LUX_GOLD))
+    c.rect(0, h - 153, w, 1.1, fill=1, stroke=0)
+
+
+def _lux_footer(c, w, page_num, total_pages):
+    c.setFillColor(HexColor(LUX_TEXT_MUTED))
+    c.setFont(FONT_REGULAR, 8)
+    c.drawCentredString(w / 2, 24, f"Heim Face Premium Plan · {BOT_USERNAME} · {page_num} / {total_pages}")
+
+
+def _lux_header(c, w, h, kicker, title, page_num, total_pages):
+    _lux_bg(c, w, h)
+    c.setFillColor(HexColor(LUX_GOLD))
+    c.setFont(FONT_BOLD, 9)
+    c.drawString(58, h - 72, kicker.upper())
+    c.setFillColor(HexColor(LUX_TEXT))
+    c.setFont(FONT_BOLD, 26)
+    for line in wrap_text(title, 34)[:2]:
+        c.drawString(58, h - 100, line)
+        h -= 29
+    _lux_footer(c, w, page_num, total_pages)
+
+
+def _lux_text(c, text, x, y, max_chars=78, lh=15, size=10, color=LUX_TEXT_SOFT, font=None):
+    c.setFillColor(HexColor(color))
+    c.setFont(font or FONT_REGULAR, size)
+    for line in wrap_text(text, max_chars):
+        c.drawString(x, y, line)
+        y -= lh
+    return y
+
+
+def _lux_card(c, x, y, width, height, title, text, accent=LUX_GOLD):
+    c.setFillColor(HexColor(LUX_PANEL))
+    c.roundRect(x, y - height, width, height, 8, fill=1, stroke=0)
+    c.setFillColor(HexColor(accent))
+    c.rect(x, y - height, 3, height, fill=1, stroke=0)
+    c.setFillColor(HexColor(LUX_TEXT))
+    c.setFont(FONT_BOLD, 11)
+    c.drawString(x + 18, y - 23, title)
+    _lux_text(c, text, x + 18, y - 43, max_chars=58, lh=13, size=9.2)
+
+
+def _lux_bullets(c, items, x, y, max_chars=80):
+    for title, text in items:
+        c.setFillColor(HexColor(LUX_GOLD))
+        c.circle(x, y + 4, 3.2, fill=1, stroke=0)
+        c.setFillColor(HexColor(LUX_TEXT))
+        c.setFont(FONT_BOLD, 10.5)
+        c.drawString(x + 16, y, title)
+        y = _lux_text(c, text, x + 16, y - 16, max_chars=max_chars, lh=13, size=9.2)
+        y -= 13
+    return y
+
+
+def _lux_metric_names(metrics):
+    return ", ".join(m["name"].lower() for m in metrics)
+
+
+def _lux_section_page(c, w, h, page_num, total_pages, kicker, title, intro, items):
+    _lux_header(c, w, h, kicker, title, page_num, total_pages)
+    y = h - 170
+    y = _lux_text(c, intro, 58, y, max_chars=91, lh=15, size=10.2, color=LUX_TEXT_SOFT)
+    y -= 20
+    _lux_bullets(c, items, 64, y, max_chars=88)
+
+
+def _lux_cover(c, w, h, image_bytes, data, page_num, total_pages):
+    _lux_bg(c, w, h)
+    tier = data["tier"]
+
+    c.setFillColor(HexColor(LUX_GOLD))
+    c.setFont(FONT_BOLD, 10)
+    c.drawString(58, h - 76, "HEIM FACE · PREMIUM PLAN")
+    c.setFillColor(HexColor(LUX_TEXT))
+    c.setFont(FONT_BOLD, 34)
+    c.drawString(58, h - 118, "Луксмаксинг-план")
+    c.setFillColor(HexColor(LUX_TEXT_SOFT))
+    c.setFont(FONT_REGULAR, 11)
+    c.drawString(58, h - 140, "Персональная стратегия внешнего потенциала")
+
+    img = base_image_for_overlay(image_bytes)
+    img.thumbnail((215, 270))
+    iw, ih = img.size
+    ix = w - iw - 58
+    iy = h - 420
+    c.setFillColor(HexColor(LUX_PANEL))
+    c.roundRect(ix - 10, iy - 10, iw + 20, ih + 20, 10, fill=1, stroke=0)
+    c.drawImage(ImageReader(img), ix, iy, width=iw, height=ih, preserveAspectRatio=True, mask="auto")
+
+    c.setFillColor(HexColor(LUX_TEXT_MUTED))
+    c.setFont(FONT_BOLD, 8)
+    c.drawString(58, h - 230, "ОЦЕНКА ВНЕШНЕГО ПОТЕНЦИАЛА")
+    c.setFillColor(HexColor(tier["color"]))
+    c.setFont(FONT_BOLD, 58)
+    c.drawString(58, h - 292, f"{data['score']:.2f}")
+    c.setFillColor(HexColor(LUX_TEXT_SOFT))
+    c.setFont(FONT_REGULAR, 13)
+    c.drawString(205, h - 286, "/ 10")
+    _bar(c, 58, h - 316, 245, data["score"], tier["color"], height=9)
+
+    c.setFillColor(HexColor(LUX_GOLD_SOFT))
+    c.setFont(FONT_BOLD, 15)
+    c.drawString(58, h - 355, f"{tier['abbr']} · {tier['name']}")
+    c.setFillColor(HexColor(LUX_TEXT_SOFT))
+    c.setFont(FONT_REGULAR, 10)
+    c.drawString(58, h - 375, f"Дата: {data['date']}")
+
+    _lux_card(
+        c, 58, 215, w - 116, 92,
+        "Фокус плана",
+        "Этот PDF не заменяет основной разбор лица. Он переводит метрики в практичные шаги: причёска, кожа, брови, нижняя треть, отёчность, фото и режим.",
+        accent=LUX_GOLD,
+    )
+    _lux_footer(c, w, page_num, total_pages)
+
+
+def _lux_score_page(c, w, h, data, page_num, total_pages):
+    _lux_header(c, w, h, "Premium score", "Итоговая оценка внешнего потенциала", page_num, total_pages)
+    tier = data["tier"]
+    focus_text, best_text, growth_text = generate_premium_focus_text(data)
+    y = h - 185
+    c.setFillColor(HexColor(tier["color"]))
+    c.setFont(FONT_BOLD, 64)
+    c.drawString(58, y, f"{data['score']:.2f}")
+    c.setFillColor(HexColor(LUX_TEXT_SOFT))
+    c.setFont(FONT_REGULAR, 14)
+    c.drawString(222, y + 8, "/ 10")
+    _bar(c, 58, y - 30, 360, data["score"], tier["color"], height=11)
+
+    y -= 70
+    _lux_text(
+        c,
+        f"База уже рассчитана в основном отчёте: 20 антропометрических метрик, симметрия, пропорции и итоговый tier. {focus_text}",
+        58, y, max_chars=91, lh=15, size=10.2,
+    )
+
+    y -= 95
+    _lux_card(c, 58, y, 225, 96, "Сильный визуальный сигнал", best_text)
+    _lux_card(c, 312, y, 225, 96, "Главная зона роста", growth_text)
+
+    y -= 135
+    _lux_text(
+        c,
+        "Цель плана — не менять лицо радикально, а поднять воспринимаемый уровень за счёт ухоженности, чистого силуэта, правильного света, контроля отёчности и деталей, которые усиливают геометрию.",
+        58, y, max_chars=91, lh=15, size=10.2, color=LUX_TEXT,
+    )
+
+
+def _lux_strengths_page(c, w, h, data, page_num, total_pages):
+    items = [
+        (m["name"], f"Оценка {m['score']:.2f}/10. Эту метрику стоит подчёркивать в фото, укладке и общем силуэте.")
+        for m in data["strengths"]
+    ]
+    intro = "Сильные стороны — это не просто хорошие цифры. Это элементы, которые нужно сделать видимыми: светом, ракурсом, аккуратной рамкой лица и чистым grooming."
+    _lux_section_page(c, w, h, page_num, total_pages, "Strengths", "Сильные стороны", intro, items)
+
+
+def _lux_growth_page(c, w, h, data, page_num, total_pages):
+    items = [
+        (m["name"], f"Оценка {m['score']:.2f}/10. Работать мягко: визуальная коррекция, уход, укладка и привычки без агрессивных решений.")
+        for m in data["weak"]
+    ]
+    intro = "Зоны роста — это точки с наибольшим потенциалом визуального улучшения. Они не означают проблему; это просто места, где аккуратная настройка даст максимальный эффект."
+    _lux_section_page(c, w, h, page_num, total_pages, "Growth map", "Зоны роста", intro, items)
+
+
+def _lux_hair_page(c, w, h, data, gender, page_num, total_pages):
+    male = gender == "male"
+    items = [
+        ("Форма", "Выбирай силуэт, который уравновешивает верхнюю и нижнюю треть лица. Если лицо кажется вытянутым — меньше высоты сверху; если широким — больше вертикали и чистые боковые линии."),
+        ("Объём", "Контролируемый объём лучше случайной пышности. Укладка должна открывать сильные зоны лица и не закрывать брови, если они работают на выражение взгляда."),
+        ("Контур", "Чистая линия висков и затылка делает лицо дороже визуально. Обновление формы каждые 3-5 недель поддерживает премиальный вид."),
+        ("Стиль", "Держи образ минималистичным: графит, чёрный, молочный, глубокие холодные оттенки. Слишком шумная укладка конкурирует с геометрией лица."),
+    ]
+    if not male:
+        items[2] = ("Контур", "Слои у лица, мягкая рамка и аккуратный объём помогают балансировать лоб, скулы и нижнюю треть без тяжёлого визуального эффекта.")
+    intro = "Причёска — главный инструмент рамки лица. Она может усилить скулы, вытянуть силуэт, смягчить нижнюю треть или, наоборот, сделать образ собраннее."
+    _lux_section_page(c, w, h, page_num, total_pages, "Hair", "Причёска", intro, items)
+
+
+def _lux_brows_page(c, w, h, data, gender, page_num, total_pages):
+    items = [
+        ("Линия", "Брови должны поддерживать направление глаз, а не спорить с ним. Лёгкое выравнивание хвостика часто визуально собирает взгляд."),
+        ("Плотность", "Не делай брови слишком графичными. Премиальный эффект — это чистая форма, натуральная плотность и отсутствие лишних волосков по нижней линии."),
+        ("Симметрия", "Если одна бровь визуально выше, корректируй не толщиной, а нижней линией и укладкой волосков прозрачным гелем."),
+        ("Цвет", "Оттенок бровей должен быть на 0-1 тон темнее волос, без резкого контраста. Слишком тёмные брови делают лицо тяжелее."),
+    ]
+    intro = "Брови управляют выражением лица. В Premium Plan их задача — сделать взгляд чище, увереннее и дороже, не превращая лицо в маску."
+    _lux_section_page(c, w, h, page_num, total_pages, "Brows", "Брови", intro, items)
+
+
+def _lux_skin_page(c, w, h, data, gender, page_num, total_pages):
+    items = [
+        ("База утром", "Мягкое очищение, лёгкое увлажнение и SPF. Ровная кожа повышает воспринимаемый уровень сильнее, чем большинство точечных визуальных правок."),
+        ("База вечером", "Очищение без пересушивания и восстановление барьера. Если кожа реагирует раздражением, уменьши активы и оставь стабильную простую схему."),
+        ("Тон и текстура", "Цель — не идеальная фарфоровость, а спокойная матово-сатиновая кожа без жирного блеска, шелушений и сильной красноты."),
+        ("Разбор фото", "Перед съёмкой: умыться, увлажнить кожу, убрать блеск с Т-зоны, проверить область под глазами и губы."),
+    ]
+    intro = "Кожа — это фон для всей геометрии лица. Даже сильные пропорции выглядят слабее, если фон уставший, пересушенный или блестящий."
+    _lux_section_page(c, w, h, page_num, total_pages, "Skin", "Кожа", intro, items)
+
+
+def _lux_beard_page(c, w, h, data, gender, page_num, total_pages):
+    if gender == "male":
+        items = [
+            ("Щетина 2-5 мм", "Если нижняя треть требует усиления, короткая ровная щетина добавляет плотность челюсти и визуально собирает подбородок."),
+            ("Линия шеи", "Не поднимай линию бороды слишком высоко. Чистая шея и аккуратный нижний край делают контур дороже."),
+            ("Усы и рот", "Если ширина рта входит в сильные стороны, не перекрывай её тяжёлыми усами. Линия губ должна оставаться читаемой."),
+            ("Плотность", "При редком росте лучше чистое бритьё, чем неравномерная борода. Премиальность всегда в аккуратности."),
+        ]
+    else:
+        items = [
+            ("Нижняя треть", "Для женского образа фокус этого раздела — чистота линии нижней трети: гладкость кожи, отсутствие визуального шума и мягкий контур."),
+            ("Контур", "Лёгкое контурирование под скулой и по нижней линии помогает собрать овал без тяжёлого макияжа."),
+            ("Губы", "Увлажнённые губы и чистый контур делают нижнюю треть аккуратнее, особенно на фото крупным планом."),
+            ("Минимализм", "Избегай перегруженных акцентов сразу на губах, бровях и глазах. Один главный акцент выглядит дороже."),
+        ]
+    intro = "Нижняя треть сильно влияет на ощущение зрелости, статуса и ухоженности. Здесь важны чистые границы и отсутствие случайности."
+    _lux_section_page(c, w, h, page_num, total_pages, "Lower third", "Щетина/борода", intro, items)
+
+
+def _lux_depuff_page(c, w, h, data, page_num, total_pages):
+    items = [
+        ("Сон", "7-8 часов сна и стабильное время подъёма заметно уменьшают отёчность лица. Главный эффект даёт регулярность, не разовые лайфхаки."),
+        ("Соль и вода", "Вечером уменьши солёное и алкоголь, утром выпей воду до кофе. Это простая база для более чёткого лица."),
+        ("Утренний протокол", "Холодный компресс 2-3 минуты, мягкий лимфодренаж от центра лица к ушам, затем лёгкое увлажнение."),
+        ("Бонусный PDF", "Отдельный файл по снижению отёчности отправляется вместе с Premium Plan: сохрани его как быстрый чек-лист на утро."),
+    ]
+    intro = "Отёчность может скрывать скулы, глаза и линию челюсти. Работа с ней часто даёт быстрый визуальный прирост без изменения самой геометрии."
+    _lux_section_page(c, w, h, page_num, total_pages, "Depuff", "Снижение отёчности", intro, items)
+
+
+def _lux_photo_page(c, w, h, data, page_num, total_pages):
+    items = [
+        ("Свет", "Лучший вариант — мягкий фронтальный свет из окна. Жёсткий верхний свет усиливает тени под глазами и делает лицо усталым."),
+        ("Камера", "Держи камеру чуть выше уровня глаз, без сильного широкоугольного искажения. Не снимай лицо слишком близко на 0.5x."),
+        ("Поза", "Шея длинная, подбородок слегка вперёд и вниз, плечи расслаблены. Это собирает нижнюю треть и улучшает контур."),
+        ("Выражение", "Нейтральное лицо плюс лёгкое напряжение глаз. Сильная улыбка меняет пропорции, а пустой взгляд снижает выразительность."),
+    ]
+    intro = "Фото должно показывать сильные стороны, а не случайно искажать лицо. Хороший свет и дистанция часто важнее фильтров."
+    _lux_section_page(c, w, h, page_num, total_pages, "Photo", "Фото и позирование", intro, items)
+
+
+def _lux_7day_page(c, w, h, data, page_num, total_pages):
+    items = [
+        ("День 1", "Сделай чистое фото анфас и 3/4 при дневном свете. Это контрольная точка для сравнения."),
+        ("День 2", "Приведи волосы и брови к аккуратной форме. Убери всё, что закрывает сильные зоны лица."),
+        ("День 3", "Настрой базовый уход: очищение, увлажнение, SPF утром; мягкое очищение и восстановление вечером."),
+        ("День 4", "Проведи depuff-утро: вода, холод, лёгкий массаж, меньше соли вечером до этого."),
+        ("День 5", "Проверь нижнюю треть: щетина/бритьё/контур должны выглядеть намеренно, а не случайно."),
+        ("День 6", "Собери 2 рабочих фото-сценария: дневной свет и вечерний мягкий свет."),
+        ("День 7", "Сравни фото с первым днём и оставь только то, что реально улучшило лицо."),
+    ]
+    intro = "Семидневный план нужен для быстрых визуальных улучшений и настройки рутины без перегруза."
+    _lux_section_page(c, w, h, page_num, total_pages, "7 days", "План на 7 дней", intro, items)
+
+
+def _lux_30day_page(c, w, h, data, page_num, total_pages):
+    items = [
+        ("Неделя 1", "Стабилизируй сон, воду, кожу и базовую аккуратность волос/бровей. Цель — убрать визуальный шум."),
+        ("Неделя 2", "Подбери форму причёски и нижней трети. Сделай 10 тестовых фото с разным светом и дистанцией."),
+        ("Неделя 3", "Усиль сильные стороны из отчёта: выстраивай укладку, брови и ракурсы вокруг топ-3 метрик."),
+        ("Неделя 4", "Зафиксируй личный стандарт: уход, стрижка, depuff-протокол, 2 лучших ракурса и одежда в премиальной палитре."),
+        ("После 30 дней", "Повтори фото в тех же условиях. Сравни не ощущения, а видимые изменения: кожа, контур, взгляд, симметрия кадра."),
+    ]
+    intro = "Тридцатидневный план переводит разовые улучшения в устойчивый внешний стандарт."
+    _lux_section_page(c, w, h, page_num, total_pages, "30 days", "План на 30 дней", intro, items)
+
+
+def create_looksmaxxing_pdf(image_bytes, analysis_data, gender, output_path):
+    c = canvas.Canvas(output_path, pagesize=A4)
+    w, h = A4
+    total_pages = 12
+
+    _lux_cover(c, w, h, image_bytes, analysis_data, 1, total_pages); c.showPage()
+    _lux_score_page(c, w, h, analysis_data, 2, total_pages); c.showPage()
+    _lux_strengths_page(c, w, h, analysis_data, 3, total_pages); c.showPage()
+    _lux_growth_page(c, w, h, analysis_data, 4, total_pages); c.showPage()
+    _lux_hair_page(c, w, h, analysis_data, gender, 5, total_pages); c.showPage()
+    _lux_brows_page(c, w, h, analysis_data, gender, 6, total_pages); c.showPage()
+    _lux_skin_page(c, w, h, analysis_data, gender, 7, total_pages); c.showPage()
+    _lux_beard_page(c, w, h, analysis_data, gender, 8, total_pages); c.showPage()
+    _lux_depuff_page(c, w, h, analysis_data, 9, total_pages); c.showPage()
+    _lux_photo_page(c, w, h, analysis_data, 10, total_pages); c.showPage()
+    _lux_7day_page(c, w, h, analysis_data, 11, total_pages); c.showPage()
+    _lux_30day_page(c, w, h, analysis_data, 12, total_pages)
+    c.save()
 
 
 # ================== MAIN BUILDER ==================
