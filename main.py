@@ -307,6 +307,7 @@ async def process_image(message: Message, image_bytes: bytes, state: FSMContext)
                     reply_markup=main_keyboard,
                 )
             else:
+                logger.error("Premium depuff guide is missing: %s", DEPUFF_GUIDE_PATH)
                 await message.answer(
                     "Основные PDF отправлены. Бонусный файл по отёчности не найден на сервере.",
                     reply_markup=main_keyboard,
