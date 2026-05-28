@@ -2,8 +2,8 @@ aiogram==3.7.0
 mediapipe==0.10.14
 opencv-python-headless==4.10.0.84
 numpy==1.26.4
-python-dotenv
-flask
-reportlab
-Pillow
-matplotlib
+matplotlib==3.9.2
+Pillow==10.4.0
+reportlab==4.2.2
+Flask==3.0.3
+python-dotenv==1.0.1
