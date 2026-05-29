@@ -688,15 +688,46 @@ def _lux_text(c, text, x, y, max_chars=78, lh=15, size=10, color=LUX_TEXT_SOFT, 
     )
 
 
-def _lux_card(c, x, y, width, height, title, text, accent=LUX_GOLD):
+def _card_lines(c, text, max_width, font_name, font_size, max_lines):
+    lines = wrap_text_width(c, text, max_width, font_name, font_size)
+    if len(lines) > max_lines:
+        lines = lines[:max_lines]
+        if lines:
+            lines[-1] = _ellipsize_to_width(c, lines[-1], max_width, font_name, font_size)
+    return lines
+
+
+def _lux_card(c, x, y, width, height, title, text, accent=LUX_GOLD, body_size=9.8, max_lines=None):
+    title_size = 10.8
+    body_lh = body_size + 4
+    pad_x = 18
+    title_y = y - 23
+    body_y = y - 46
+    bottom = y - height + 16
+    available_lines = max(1, int((body_y - bottom) // body_lh) + 1)
+    if max_lines is None:
+        max_lines = available_lines
+    else:
+        max_lines = min(max_lines, available_lines)
+
     c.setFillColor(HexColor(LUX_PANEL))
     c.roundRect(x, y - height, width, height, 8, fill=1, stroke=0)
     c.setFillColor(HexColor(accent))
     c.rect(x, y - height, 3, height, fill=1, stroke=0)
     c.setFillColor(HexColor(LUX_TEXT))
-    c.setFont(FONT_BOLD, 11)
-    c.drawString(x + 18, y - 23, title)
-    _lux_text(c, text, x + 18, y - 43, max_width=width - 34, lh=13, size=9.2, min_y=y - height + 14)
+    c.setFont(FONT_BOLD, title_size)
+    safe_title = _ellipsize_to_width(c, str(title), width - 2 * pad_x, FONT_BOLD, title_size)
+    c.drawString(x + pad_x, title_y, safe_title)
+
+    c.setFillColor(HexColor(LUX_TEXT_SOFT))
+    c.setFont(FONT_REGULAR, body_size)
+    lines = _card_lines(c, text, width - 2 * pad_x, FONT_REGULAR, body_size, max_lines)
+    ty = body_y
+    for line in lines:
+        if ty < bottom:
+            break
+        c.drawString(x + pad_x, ty, line)
+        ty -= body_lh
 
 
 def _lux_bullets(c, items, x, y, max_chars=80, max_width=455, min_y=62):
@@ -706,16 +737,31 @@ def _lux_bullets(c, items, x, y, max_chars=80, max_width=455, min_y=62):
         c.setFillColor(HexColor(LUX_GOLD))
         c.circle(x, y + 4, 3.2, fill=1, stroke=0)
         c.setFillColor(HexColor(LUX_TEXT))
-        c.setFont(FONT_BOLD, 10.5)
-        c.drawString(x + 16, y, title)
+        c.setFont(FONT_BOLD, 10.8)
+        c.drawString(x + 16, y, _ellipsize_to_width(c, title, max_width, FONT_BOLD, 10.8))
         y = _lux_text(c, text, x + 16, y - 16, max_chars=max_chars, max_width=max_width,
-                      lh=13, size=9.2, min_y=min_y, max_lines=4)
-        y -= 13
+                      lh=14, size=9.8, min_y=min_y, max_lines=3)
+        y -= 14
     return y
 
 
 def _lux_metric_names(metrics):
     return ", ".join(m["name"].lower() for m in metrics)
+
+
+def _lux_group_label(metrics, default_label):
+    names = _metric_names(metrics)
+    if names & NOSE_METRICS:
+        return "центральная зона"
+    return default_label
+
+
+def _lux_strengths_label(data):
+    return _lux_group_label(data["strengths"], "топ-сильные зоны")
+
+
+def _lux_weak_label(data):
+    return _lux_group_label(data["weak"], "ключевые зоны роста")
 
 
 def _metric_names(metrics):
@@ -785,6 +831,12 @@ def _primary_limit_sentence(data):
     m = _limiting_metric(data)
     group = _metric_group_name(m["name"])
     return f"Главный ограничивающий фактор: {m['name'].lower()} ({score_status(m['score'])}), зона: {group}."
+
+
+def _compact_limit_sentence(data):
+    m = _limiting_metric(data)
+    status = "зона роста" if m["score"] < 5 else score_status(m["score"])
+    return f"{m['name']} · {status}"
 
 
 def _zone_strategy(metric_name, gender, strong=False):
@@ -896,7 +948,7 @@ def _hair_plan(data, gender):
     else:
         recommended = "Классический taper, side part, мягкая текстура сверху, чистый контур висков и затылка."
         avoid = "Случайная длина без формы, пересушенная укладка, слишком много стайлинга и тяжёлая чёлка."
-        why = f"Потому что твои сильные зоны ({_lux_metric_names(strengths)}) лучше работают в чистой и спокойной рамке."
+        why = "Потому что топ-сильные зоны лучше работают в чистой и спокойной рамке."
 
     return [
         ("Рекомендуемые стрижки", recommended),
@@ -956,17 +1008,17 @@ def _photo_plan(data):
         ("Худший ракурс", worst_angle),
         ("Лучший свет", best_light),
         ("Худший свет", worst_light),
-        ("Персональный акцент", f"В кадре сначала должен считываться актив: {_lux_metric_names(strengths)}; не давай слабым зонам ({_lux_metric_names(weak)}) стать центром внимания."),
+        ("Персональный акцент", f"В кадре сначала считываются топ-сильные зоны; {_lux_group_label(weak, 'ключевые зоны роста')} не должны становиться центром внимания."),
     ]
 
 
 def _limiter_plan(data, gender):
     limiter = _limiting_metric(data)
     return [
-        ("Метрика", f"{limiter['name']} · технический score {limiter['score']:.2f}/10 · визуально: {score_status(limiter['score'])}."),
-        ("Что это ограничивает", f"Эта зона влияет на {_metric_group_name(limiter['name'])} и может снижать общий уровень впечатления сильнее, чем остальные метрики."),
+        ("Метрика", f"{limiter['name']} · {score_status(limiter['score'])}."),
+        ("Что ограничивает", f"Влияет на {_metric_group_name(limiter['name'])}: эту зону лучше не выводить в центр кадра."),
         ("Как смягчать", _zone_strategy(limiter["name"], gender, strong=False)),
-        ("Чего не делать", "Не пытайся компенсировать зону агрессивными решениями. В Premium-логике сначала работают свет, ракурс, grooming, причёска и чистая подача."),
+        ("Чего не делать", "Не компенсировать агрессивно. Сначала работают свет, ракурс, grooming, причёска и чистая подача."),
     ]
 
 
@@ -976,15 +1028,15 @@ def _potential_plan(data, gender):
     return [
         ("Текущий score", f"{data['score']:.2f}/10 · tier {data['tier']['abbr']} · {data['tier']['name']}."),
         ("Прогноз после внедрения", f"{data['score']:.2f} → {low:.1f}-{high:.1f}. Это визуальный прогноз, а не пересчёт исходных метрик."),
-        ("Что даёт прирост", f"Главный рычаг — зона «{limiter['name']}», плюс усиление сильных сторон: {_lux_metric_names(data['strengths'])}."),
-        ("Условие", "Прогноз реалистичен только при повторяемой системе: стрижка, брови, кожа, depuff-утро и одинаковые фото-условия 30 дней."),
+        ("Что даёт прирост", f"Главный рычаг — «{limiter['name']}», затем топ-сильные зоны и чистая фото-подача."),
+        ("Условие", "Система на 30 дней: волосы, брови, кожа, depuff-утро и одинаковые фото-условия."),
     ]
 
 
 def _lux_section_page(c, w, h, page_num, total_pages, kicker, title, intro, items):
     _lux_header(c, w, h, kicker, title, page_num, total_pages)
     y = h - 170
-    y = _lux_text(c, intro, 58, y, max_width=w - 116, lh=15, size=10.2, color=LUX_TEXT_SOFT, min_y=62)
+    y = _lux_text(c, intro, 58, y, max_width=w - 116, lh=15, size=10.4, color=LUX_TEXT_SOFT, min_y=62, max_lines=4)
     y -= 20
     _lux_bullets(c, items, 64, y, max_chars=88, max_width=w - 144, min_y=62)
 
@@ -1031,13 +1083,15 @@ def _lux_cover(c, w, h, image_bytes, data, page_num, total_pages):
     c.setFont(FONT_REGULAR, 10)
     c.drawString(58, h - 345, f"Дата: {data['date']}")
 
-    _lux_card(c, 58, 250, 225, 78, "Главный актив", _primary_strength_sentence(data), accent=LUX_GOLD)
-    _lux_card(c, 312, 250, 225, 78, "Главный лимитер", _primary_limit_sentence(data), accent=LUX_PURPLE)
+    _lux_card(c, 58, 250, 225, 82, "Главный актив", _primary_strength_sentence(data), accent=LUX_GOLD, max_lines=2)
+    _lux_card(c, 312, 250, 225, 82, "Главный лимитер", _compact_limit_sentence(data), accent=LUX_PURPLE, body_size=10.4, max_lines=2)
     _lux_card(
         c, 58, 145, w - 116, 74,
         "Топ сильных зон",
-        " · ".join(f"{m['name']} {display_metric_score(m['score']):.1f}" for m in data["strengths"]),
+        "топ-сильные зоны · главный визуальный актив для света, ракурса и grooming",
         accent=tier["color"],
+        body_size=10.2,
+        max_lines=2,
     )
     _lux_footer(c, w, page_num, total_pages)
 
@@ -1117,10 +1171,10 @@ def _lux_limiter_page(c, w, h, data, gender, page_num, total_pages):
     c.drawString(58, y - 17, "В PDF низкие метрики показываются мягко; технический score остаётся внутри расчёта.")
 
     cards = _limiter_plan(data, gender)
-    _lux_card(c, 58, 410, 225, 104, cards[0][0], cards[0][1], accent=LUX_PURPLE)
-    _lux_card(c, 312, 410, 225, 104, cards[1][0], cards[1][1], accent=LUX_GOLD)
-    _lux_card(c, 58, 275, 225, 120, cards[2][0], cards[2][1], accent=LUX_GOLD)
-    _lux_card(c, 312, 275, 225, 120, cards[3][0], cards[3][1], accent=LUX_PURPLE)
+    _lux_card(c, 58, 410, 225, 110, cards[0][0], cards[0][1], accent=LUX_PURPLE, body_size=10.2, max_lines=3)
+    _lux_card(c, 312, 410, 225, 110, cards[1][0], cards[1][1], accent=LUX_GOLD, body_size=10.2, max_lines=3)
+    _lux_card(c, 58, 276, 225, 116, cards[2][0], cards[2][1], accent=LUX_GOLD, body_size=9.9, max_lines=4)
+    _lux_card(c, 312, 276, 225, 116, cards[3][0], cards[3][1], accent=LUX_PURPLE, body_size=10.0, max_lines=4)
 
     _lux_text(
         c,
@@ -1169,11 +1223,11 @@ def _lux_potential_page(c, w, h, data, gender, page_num, total_pages):
     y -= 24
 
     cards = _potential_plan(data, gender)
-    _lux_card(c, 58, y, 225, 96, cards[2][0], cards[2][1], accent=LUX_GOLD)
-    _lux_card(c, 312, y, 225, 96, cards[3][0], cards[3][1], accent=LUX_PURPLE)
+    _lux_card(c, 58, y, 225, 98, cards[2][0], cards[2][1], accent=LUX_GOLD, body_size=10.0, max_lines=3)
+    _lux_card(c, 312, y, 225, 98, cards[3][0], cards[3][1], accent=LUX_PURPLE, body_size=10.0, max_lines=3)
     y -= 126
-    _lux_card(c, 58, y, 225, 96, "Персональные рычаги", f"1) {limiter['name']}  2) {_lux_metric_names(data['weak'][:2])}  3) акцент на {_lux_metric_names(data['strengths'][:2])}.", accent=LUX_PURPLE)
-    _lux_card(c, 312, y, 225, 96, "Как мерить прогресс", "Повторяй фото анфас и 3/4 в одинаковом свете. Сравнивай не настроение, а контур, взгляд, кожу, отёчность и то, куда первым уходит внимание.", accent=LUX_GOLD)
+    _lux_card(c, 58, y, 225, 98, "Персональные рычаги", f"{limiter['name']} · {_lux_weak_label(data)} · топ-сильные зоны.", accent=LUX_PURPLE, body_size=10.0, max_lines=3)
+    _lux_card(c, 312, y, 225, 98, "Как мерить прогресс", "Фото анфас и 3/4 в одинаковом свете. Сравнивай контур, взгляд, кожу и первое впечатление.", accent=LUX_GOLD, body_size=10.0, max_lines=3)
 
 
 def _lux_hair_page(c, w, h, data, gender, page_num, total_pages):
@@ -1216,9 +1270,9 @@ def _lux_skin_page(c, w, h, data, gender, page_num, total_pages):
         ("База утром", f"Мягкое очищение, лёгкое увлажнение и SPF. При score {score:.2f}/10 задача — не терять визуальный уровень из-за усталой текстуры: {intensity}."),
         ("База вечером", f"Восстановление барьера без пересушивания. Если кожа раздражена, лимитер «{limiter['name']}» будет считываться заметнее, потому что внимание уйдёт в визуальный шум."),
         ("Тон и текстура", f"Цель — спокойная матово-сатиновая кожа. Главный фото-фокус: {photo_focus}."),
-        ("Перед съёмкой", f"Умыться, увлажнить кожу, убрать блеск с Т-зоны и проверить губы. Это помогает сильным зонам ({_lux_metric_names(data['strengths'])}) считываться первыми."),
+        ("Перед съёмкой", "Умыться, увлажнить кожу, убрать блеск с Т-зоны и проверить губы. Это помогает топ-сильным зонам считываться первыми."),
     ]
-    intro = f"Кожа — фон для геометрии. В твоём профиле она должна поддержать активы ({_lux_metric_names(data['strengths'])}) и не усиливать зоны роста ({_lux_metric_names(data['weak'])})."
+    intro = f"Кожа — фон для геометрии. В твоём профиле она должна поддержать топ-сильные зоны и не усиливать {_lux_weak_label(data)}."
     _lux_section_page(c, w, h, page_num, total_pages, "Skin", "Кожа", intro, items)
 
 
@@ -1240,16 +1294,16 @@ def _lux_beard_page(c, w, h, data, gender, page_num, total_pages):
             ("Щетина 2-5 мм", f"{lower_focus} Короткая ровная щетина добавляет плотность челюсти и визуально собирает подбородок."),
             ("Линия шеи", f"Не поднимай линию бороды слишком высоко: при лимитере «{limiter['name']}» грязная шея быстро утяжеляет весь кадр."),
             ("Усы и рот", f"{'Не перекрывай тяжёлыми усами сильную зону «' + lip_strength['name'] + '».' if lip_strength else 'Держи линию губ читаемой: рот не должен теряться под щетиной.'}"),
-            ("Плотность", f"Если рост неравномерный, лучше чистое бритьё. Твоя цель — усилить {_lux_metric_names(data['strengths'])}, а не показать случайную текстуру."),
+            ("Плотность", "Если рост неравномерный, лучше чистое бритьё. Твоя цель — усилить топ-сильные зоны, а не показать случайную текстуру."),
         ]
     else:
         items = [
             ("Нижняя треть", f"{lower_focus} Для женского образа важны гладкость кожи, отсутствие визуального шума и мягкий контур."),
             ("Контур", f"Лёгкая тень под скулой и по нижней линии уместна, если она не выводит в центр «{limiter['name']}»."),
             ("Губы", f"{'Увлажнённые губы и мягкая полуулыбка подчеркнут сильную зону «' + lip_strength['name'] + '».' if lip_strength else 'Увлажнённые губы и чистый контур делают нижнюю треть аккуратнее на крупном плане.'}"),
-            ("Минимализм", f"Один главный акцент выглядит дороже. В твоём случае логичнее вести внимание к: {_lux_metric_names(data['strengths'][:2])}."),
+            ("Минимализм", "Один главный акцент выглядит дороже. В твоём случае логичнее вести внимание к топ-сильным зонам."),
         ]
-    intro = f"Нижняя треть влияет на статус и ухоженность. Раздел настроен под твой профиль: сильные зоны — {_lux_metric_names(data['strengths'])}, лимитер — {limiter['name']}."
+    intro = f"Нижняя треть влияет на статус и ухоженность. Раздел настроен под твой профиль: топ-сильные зоны и лимитер «{limiter['name']}»."
     _lux_section_page(c, w, h, page_num, total_pages, "Lower third", "Щетина/борода", intro, items)
 
 
@@ -1264,15 +1318,15 @@ def _lux_depuff_page(c, w, h, data, page_num, total_pages):
         ("Утренний протокол", "Холодный компресс 2-3 минуты, мягкий лимфодренаж от центра лица к ушам, затем лёгкое увлажнение."),
         ("Бонусный PDF", "Отдельный файл по снижению отёчности отправляется вместе с Premium Plan: используй его как чек-лист перед фото."),
     ]
-    intro = f"Отёчность может скрывать сильные стороны: {_lux_metric_names(data['strengths'])}. Поэтому протокол ниже привязан к твоему профилю, а не является общим советом."
+    intro = "Отёчность может скрывать топ-сильные зоны. Поэтому протокол ниже привязан к твоему профилю, а не является общим советом."
     _lux_section_page(c, w, h, page_num, total_pages, "Depuff", "Снижение отёчности", intro, items)
 
 
 def _lux_photo_page(c, w, h, data, page_num, total_pages):
     items = _photo_plan(data)
     intro = (
-        f"Фото должно показывать активы ({_lux_metric_names(data['strengths'])}) и не выводить в центр слабые зоны "
-        f"({_lux_metric_names(data['weak'])}). Поэтому ракурс и свет ниже привязаны к твоим метрикам."
+        f"Фото должно показывать топ-сильные зоны и не выводить в центр {_lux_weak_label(data)}. "
+        "Поэтому ракурс и свет ниже привязаны к твоим метрикам."
     )
     _lux_section_page(c, w, h, page_num, total_pages, "Photo", "Фото и позирование", intro, items)
 
@@ -1289,7 +1343,7 @@ def _lux_style_page(c, w, h, data, gender, page_num, total_pages):
         ("Вырез и ворот", "Открытая шея визуально улучшает нижнюю треть. Если низ лица в зонах роста — избегай высокого ворота и шарфов у подбородка."),
         ("Аксессуары", f"Оставь один акцент: {accent}. Несколько акцентов рядом с лицом дробят внимание и делают образ дешевле."),
     ]
-    intro = f"Одежда должна работать на сильные зоны ({_lux_metric_names(data['strengths'])}) и не усиливать слабые ({_lux_metric_names(data['weak'])})."
+    intro = f"Одежда должна работать на топ-сильные зоны и не усиливать {_lux_weak_label(data)}."
     _lux_section_page(c, w, h, page_num, total_pages, "Style", "Одежда, цвета и визуальная подача", intro, items)
 
 
@@ -1326,11 +1380,11 @@ def _lux_mistakes_page(c, w, h, data, page_num, total_pages):
         ("Жёсткий верхний свет", f"Он даёт тени под глазами и делает кожу менее ровной. При лимитере «{limiter['name']}» лучше мягкий свет из окна."),
         ("Закрытые брови", brow_text),
         ("Напряжённый рот", mouth_text),
-        ("Случайный фон", f"Шумный фон спорит с активами ({_lux_metric_names(strengths)}). Чем чище кадр, тем дороже считывается лицо."),
+        ("Случайный фон", "Шумный фон спорит с топ-сильными зонами. Чем чище кадр, тем дороже считывается лицо."),
     ]
     if eye_strength:
         items.append(("Потерянный взгляд", f"Не смотри пусто мимо камеры: «{eye_strength['name']}» может быть главным активом кадра. Держи фокус и лёгкое напряжение взгляда."))
-    intro = f"Ошибки ниже подобраны под твои зоны роста ({_lux_metric_names(weak)}) и сильные стороны ({_lux_metric_names(strengths)})."
+    intro = f"Ошибки ниже подобраны под {_lux_group_label(weak, 'ключевые зоны роста')} и топ-сильные зоны."
     _lux_section_page(c, w, h, page_num, total_pages, "Photo mistakes", "Ошибки, которые ухудшают лицо на фото", intro, items)
 
 
@@ -1338,7 +1392,7 @@ def _lux_7day_page(c, w, h, data, page_num, total_pages):
     limiter = _limiting_metric(data)
     items = [
         ("День 1", f"Сделай фото анфас и 3/4. Отметь, как в кадре выглядит лимитер: {limiter['name'].lower()}."),
-        ("День 2", f"Приведи волосы к форме из раздела «Причёска». Цель — показать сильные зоны: {_lux_metric_names(data['strengths'])}."),
+        ("День 2", "Приведи волосы к форме из раздела «Причёска». Цель — показать топ-сильные зоны."),
         ("День 3", "Настрой базовый уход: очищение, увлажнение, SPF утром; мягкое очищение и восстановление вечером."),
         ("День 4", "Проведи depuff-утро и сравни контур лица с фото дня 1 при таком же свете."),
         ("День 5", "Проверь нижнюю треть: щетина/бритьё/контур должны выглядеть намеренно, особенно если низ лица в зонах роста."),
@@ -1355,7 +1409,7 @@ def _lux_30day_page(c, w, h, data, page_num, total_pages):
     items = [
         ("Неделя 1", f"Убери визуальный шум: кожа, волосы, брови, отёчность. Фокус — не усиливать {limiter['name'].lower()}."),
         ("Неделя 2", "Подбери форму причёски и нижней трети. Сделай 10 тестовых фото с разным светом и дистанцией."),
-        ("Неделя 3", f"Усиль сильные стороны: {_lux_metric_names(data['strengths'])}. Ракурсы и grooming строятся вокруг них."),
+        ("Неделя 3", "Усиль топ-сильные зоны. Ракурсы и grooming строятся вокруг них."),
         ("Неделя 4", f"Зафиксируй личный стандарт. Целевой визуальный диапазон после внедрения: {low:.1f}-{high:.1f}/10."),
         ("После 30 дней", "Повтори фото в тех же условиях. Сравни не ощущения, а видимые изменения: кожа, контур, взгляд, симметрия кадра."),
     ]
@@ -1383,7 +1437,7 @@ def _lux_final_page(c, w, h, data, page_num, total_pages):
     y = h - 170
     summary = (
         f"Твой текущий ориентир: {data['score']:.2f}/10, tier {data['tier']['abbr']} · {data['tier']['name']}. "
-        f"Сильные стороны: {_lux_metric_names(data['strengths'])}. Зоны роста: {_lux_metric_names(data['weak'])}."
+        f"Фокус: топ-сильные зоны и {_lux_weak_label(data)}."
     )
     y = _lux_text(c, summary, 58, y, max_width=w - 116, lh=15, size=10.5, color=LUX_TEXT)
     y -= 22
