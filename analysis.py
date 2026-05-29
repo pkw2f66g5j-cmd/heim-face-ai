@@ -5,7 +5,7 @@ import cv2
 import numpy as np
 import mediapipe as mp
 
-from config import IDX, get_norms, get_tier
+from config import IDX, get_norms, get_metric_norm, get_tier
 
 # ================== MEDIAPIPE ==================
 face_mesh = mp.solutions.face_mesh.FaceMesh(
@@ -72,6 +72,10 @@ def analyze_face(image_bytes: bytes, gender: str):
     # --- базовые расстояния ---
     face_w      = dist(pt("face_left"),      pt("face_right"))
     face_h      = dist(pt("nose_bridge"),    pt("chin"))
+    # Полная высота лица (лоб -> подбородок) для метрики "Пропорции лица".
+    # face_h (переносица -> подбородок) сохранён для метрик, нормы которых
+    # калибровались под него (длина носа, длина подбородка и т.д.).
+    full_face_h = dist(pt("forehead"),       pt("chin"))
     cheek_w     = dist(pt("cheek_left"),     pt("cheek_right"))
     jaw_w       = dist(pt("jaw_left"),       pt("jaw_right"))
     jaw_w_lower = dist(pt("jaw_left_lower"), pt("jaw_right_lower"))
@@ -108,7 +112,14 @@ def analyze_face(image_bytes: bytes, gender: str):
     sym_outer = abs(abs(axis_dev("left_eye_outer")) - abs(axis_dev("right_eye_outer")))
     sym_mouth = abs(abs(axis_dev("mouth_left"))     - abs(axis_dev("mouth_right")))
     sym_nose  = abs(abs(axis_dev("nose_left"))      - abs(axis_dev("nose_right")))
-    symmetry  = max(0, 1 - (sym_inner + sym_outer + sym_mouth + sym_nose) / 4 * 5)
+    # Среднее отклонение от зеркальной симметрии.
+    sym_dev_raw = (sym_inner + sym_outer + sym_mouth + sym_nose) / 4
+    # Защита от субпиксельного шума MediaPipe: отклонения меньше порога
+    # (~0.4% ширины лица) считаем нулевыми — это дрожание точек, а не асимметрия.
+    SYM_NOISE_FLOOR = 0.004
+    sym_dev = max(0, sym_dev_raw - SYM_NOISE_FLOOR)
+    # Множитель 2.5 (было 5): прежняя жёсткость превращала шум в "асимметрию".
+    symmetry  = max(0, 1 - sym_dev * 2.5)
 
     eye_tilt     = abs(pt("right_eye_outer")[1] - pt("left_eye_outer")[1]) / max(biocular_w, 1)
     chin_contour = jaw_w_lower / max(jaw_w, 1)
@@ -117,7 +128,7 @@ def analyze_face(image_bytes: bytes, gender: str):
 
     values = {
         "Симметрия лица":           symmetry,
-        "Пропорции лица":           face_h / face_w,
+        "Пропорции лица":           full_face_h / face_w,
         "Вертикальный баланс":      middle_third / lower_third,
         "Баланс скул и челюсти":    cheek_w / jaw_w,
         "Размер глаз":              eye_w / face_w,
@@ -138,11 +149,9 @@ def analyze_face(image_bytes: bytes, gender: str):
         "Высота бровей":            brow_height,
     }
 
-    norms   = get_norms(gender)
     metrics = []
     for name, value in values.items():
-        norm  = norms[name]["norm"]
-        sigma = norms[name]["sigma"]
+        norm, sigma, formula = get_metric_norm(gender, name)
         metrics.append({
             "name":    name,
             "value":   round(value, 4),
@@ -150,7 +159,7 @@ def analyze_face(image_bytes: bytes, gender: str):
             "sigma":   sigma,
             "score":   calc_score(value, norm, sigma),
             "z":       calc_z(value, norm, sigma),
-            "formula": norms[name]["formula"],
+            "formula": formula,
         })
 
     total_score    = round(sum(m["score"] for m in metrics) / len(metrics), 2)
